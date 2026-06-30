@@ -52,3 +52,17 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Database (SQLite — user data, not source code)
+/db/
+*.db
+*.db-journal
+
+# Media files (user content, not source code)
+/media/
+
+# Internal scripts
+/.zscripts/
+
+# Download artifacts
+/download/
