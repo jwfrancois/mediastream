@@ -6,10 +6,16 @@ import { useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { AudioPlayerBar } from '@/components/player/AudioPlayerBar';
-import { useAudioPlayer } from '@/lib/store';
+import { useAudioPlayer, useLocalLibraries } from '@/lib/store';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const queueLength = useAudioPlayer((s) => s.queue.length);
+  const hydrateLocal = useLocalLibraries((s) => s.hydrate);
+
+  // Hydrate local libraries (IndexedDB) on mount
+  useEffect(() => {
+    hydrateLocal();
+  }, [hydrateLocal]);
 
   // Keyboard shortcut: spacebar to toggle audio play (when not in input)
   useEffect(() => {

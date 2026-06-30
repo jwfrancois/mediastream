@@ -1,12 +1,13 @@
 // Video Player — full-screen overlay for movies and TV episodes.
 // Custom controls: play/pause, seek, volume, fullscreen, skip intro/outro, next episode.
-// Reports playback progress to /api/progress every 15 seconds.
+// Reports playback progress to /api/progress every 15 seconds (for server items)
+// or stores it locally (for local items).
 
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useVideoPlayer, useNav } from '@/lib/store';
-import { streamUrl, formatDuration } from '@/lib/format';
+import { useVideoPlayer, useNav, useLocalLibraries } from '@/lib/store';
+import { streamUrl, formatDuration, isLocalId } from '@/lib/format';
 import { putJson } from '@/lib/useApi';
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize,
@@ -19,6 +20,7 @@ const PROGRESS_INTERVAL_MS = 15_000; // report progress every 15s
 export function VideoPlayer() {
   const { current, open, closePlayer } = useVideoPlayer();
   const navigate = useNav((s) => s.navigate);
+  const getLocalItem = useLocalLibraries((s) => s.getLocalItem);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -33,6 +35,37 @@ export function VideoPlayer() {
   const [showControls, setShowControls] = useState(true);
   const [buffering, setBuffering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null); // resolved source URL (server or blob)
+
+  // Resolve the source URL whenever the current item changes.
+  // For server items: synchronous stream URL.
+  // For local items: async — fetch the File from the file handle and create a blob URL.
+  useEffect(() => {
+    if (!open || !current) {
+      setVideoSrc(null);
+      return;
+    }
+    let cancelled = false;
+    if (current.isLocal && isLocalId(current.id)) {
+      const localItem = getLocalItem(current.id);
+      if (!localItem) {
+        setError('Local media file not found. Try re-scanning the library.');
+        setVideoSrc(null);
+        return;
+      }
+      setBuffering(true);
+      import('@/lib/local-library').then((ll) => ll.getLocalBlobUrl(localItem))
+        .then((url) => {
+          if (!cancelled) setVideoSrc(url);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(`Failed to load local file: ${e.message}`);
+        });
+    } else {
+      setVideoSrc(streamUrl(current.type, current.id));
+    }
+    return () => { cancelled = true; };
+  }, [open, current?.id, current?.isLocal, getLocalItem]);
 
   // Reset state when a new video loads
   useEffect(() => {
@@ -69,6 +102,8 @@ export function VideoPlayer() {
     const interval = setInterval(async () => {
       const video = videoRef.current;
       if (!video) return;
+      // Skip server-side progress reporting for local items
+      if (current.isLocal) return;
       try {
         await putJson(`/api/progress/${current.type.toUpperCase()}/${current.id}`, {
           position: Math.floor(video.currentTime),
@@ -83,6 +118,8 @@ export function VideoPlayer() {
   const reportFinalProgress = useCallback(async () => {
     const video = videoRef.current;
     if (!video || !current) return;
+    // Skip server-side progress reporting for local items
+    if (current.isLocal) return;
     try {
       await putJson(`/api/progress/${current.type.toUpperCase()}/${current.id}`, {
         position: Math.floor(video.currentTime),
@@ -212,7 +249,7 @@ export function VideoPlayer() {
     >
       <video
         ref={videoRef}
-        src={streamUrl(current.type, current.id)}
+        src={videoSrc ?? undefined}
         className="w-full h-full object-contain"
         onClick={togglePlay}
         onPlay={() => { setPlaying(true); scheduleHideControls(); }}
@@ -384,6 +421,7 @@ export function VideoPlayer() {
                     subtitle: next.subtitle,
                     duration: next.duration,
                     color: next.color,
+                    isLocal: next.isLocal,
                     queue: next.queue,
                   });
                 }

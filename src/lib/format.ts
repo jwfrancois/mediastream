@@ -1,5 +1,7 @@
 // Format and helper utilities for the media app
 
+import type { LocalMediaItem } from './local-library';
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || seconds <= 0) return '0:00';
   const h = Math.floor(seconds / 3600);
@@ -51,4 +53,30 @@ export function formatProgress(position: number, duration: number | null | undef
 
 export function streamUrl(type: 'movie' | 'episode' | 'track' | 'podcast' | 'audiobook', id: string): string {
   return `/api/stream/${type}/${id}`;
+}
+
+// Check if an id is a local (browser-side) media item
+export function isLocalId(id: string): boolean {
+  return id.startsWith('local_');
+}
+
+// Resolve a playable URL for a media item.
+// For server items: returns the streaming API URL synchronously.
+// For local items: returns a Promise that resolves to a blob URL.
+export type PlayableSource =
+  | { kind: 'server'; url: string }
+  | { kind: 'local'; urlPromise: Promise<string> };
+
+export function resolvePlayableSource(
+  type: 'movie' | 'episode' | 'track' | 'podcast' | 'audiobook',
+  id: string,
+  localItem?: LocalMediaItem | null,
+): PlayableSource {
+  if (isLocalId(id) && localItem) {
+    return {
+      kind: 'local',
+      urlPromise: import('./local-library').then((ll) => ll.getLocalBlobUrl(localItem)),
+    };
+  }
+  return { kind: 'server', url: streamUrl(type, id) };
 }

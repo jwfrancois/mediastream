@@ -2,9 +2,9 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useNav } from '@/lib/store';
+import { useNav, useAudioPlayer, useLocalLibraries } from '@/lib/store';
 import { MediaCardSquare } from '@/components/media/MediaCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -22,8 +22,92 @@ interface ArtistsData {
 export function MusicView() {
   const [tab, setTab] = useState('albums');
   const navigate = useNav((s) => s.navigate);
+  const playAudio = useAudioPlayer((s) => s.playNow);
+  const localItems = useLocalLibraries((s) => s.items);
+
   const { data: albumsData, loading: albumsLoading } = useApi<AlbumsData>('/api/music/albums?sort=recent');
   const { data: artistsData, loading: artistsLoading } = useApi<ArtistsData>('/api/music/artists');
+
+  // Group local tracks into albums
+  const localAlbums = useMemo(() => {
+    const map = new Map<string, { title: string; artist: string; coverColor: string; tracks: any[] }>();
+    for (const i of localItems) {
+      if (i.mediaType !== 'track') continue;
+      const albumKey = i.album || 'Unknown Album';
+      const artistName = i.artist || 'Unknown Artist';
+      const key = albumKey + '|' + artistName;
+      if (!map.has(key)) {
+        map.set(key, {
+          title: albumKey,
+          artist: artistName,
+          coverColor: i.color,
+          tracks: [],
+        });
+      }
+      map.get(key)!.tracks.push(i);
+    }
+    return Array.from(map.entries()).map(([key, val]) => ({
+      id: 'local_album_' + key,
+      title: val.title,
+      year: undefined,
+      genre: undefined,
+      coverColor: val.coverColor,
+      addedAt: new Date().toISOString(),
+      artist: { id: 'local_artist_' + val.artist, name: val.artist, imageColor: val.coverColor },
+      trackCount: val.tracks.length,
+      isLocal: true,
+      _localTracks: val.tracks,
+    }));
+  }, [localItems]);
+
+  // Group local tracks into artists
+  const localArtists = useMemo(() => {
+    const map = new Map<string, { name: string; coverColor: string; albumCount: number; trackCount: number }>();
+    for (const i of localItems) {
+      if (i.mediaType !== 'track') continue;
+      const name = i.artist || 'Unknown Artist';
+      if (!map.has(name)) {
+        map.set(name, { name, coverColor: i.color, albumCount: 0, trackCount: 0 });
+      }
+      const a = map.get(name)!;
+      a.trackCount++;
+    }
+    // Count unique albums per artist
+    const albumSets = new Map<string, Set<string>>();
+    for (const i of localItems) {
+      if (i.mediaType !== 'track') continue;
+      const name = i.artist || 'Unknown Artist';
+      if (!albumSets.has(name)) albumSets.set(name, new Set());
+      albumSets.get(name)!.add(i.album || 'Unknown Album');
+    }
+    return Array.from(map.values()).map((a) => ({
+      id: 'local_artist_' + a.name,
+      name: a.name,
+      imageColor: a.coverColor,
+      bio: undefined,
+      albumCount: albumSets.get(a.name)?.size ?? 0,
+      trackCount: a.trackCount,
+      isLocal: true,
+    }));
+  }, [localItems]);
+
+  const allAlbums = [...(albumsData?.items ?? []), ...localAlbums];
+  const allArtists = [...(artistsData?.items ?? []), ...localArtists];
+
+  const handlePlayLocalAlbum = (album: any) => {
+    const tracks = album._localTracks;
+    if (!tracks || tracks.length === 0) return;
+    tracks.sort((a: any, b: any) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0));
+    playAudio(tracks.map((t: any) => ({
+      id: t.id,
+      type: 'track' as const,
+      title: t.title,
+      subtitle: album.artist?.name ?? 'Unknown Artist',
+      duration: t.duration,
+      color: album.coverColor,
+      isLocal: true,
+    })));
+  };
 
   return (
     <div className="px-4 md:px-8 py-6 pb-12">
@@ -33,7 +117,7 @@ export function MusicView() {
           Music
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          {albumsData ? `${albumsData.total} album${albumsData.total !== 1 ? 's' : ''} • ${artistsData?.items.length ?? 0} artist${(artistsData?.items.length ?? 0) !== 1 ? 's' : ''}` : 'Loading your music library…'}
+          {albumsData ? `${albumsData.total + localAlbums.length} album${(albumsData.total + localAlbums.length) !== 1 ? 's' : ''} • ${allArtists.length} artist${allArtists.length !== 1 ? 's' : ''}${localAlbums.length > 0 ? ` (${localAlbums.length} local)` : ''}` : 'Loading your music library…'}
         </p>
       </div>
 
@@ -48,16 +132,21 @@ export function MusicView() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-md" />)}
             </div>
-          ) : albumsData && albumsData.items.length > 0 ? (
+          ) : allAlbums.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {albumsData.items.map((a) => (
-                <MediaCardSquare
-                  key={a.id}
-                  title={a.title}
-                  subtitle={`${a.year ?? ''} • ${a.artist?.name ?? ''}`.replace(/^ • | • $/g, '')}
-                  color={a.coverColor}
-                  onClick={() => navigate({ kind: 'album', id: a.id })}
-                />
+              {allAlbums.map((a: any) => (
+                <div key={a.id} className="relative">
+                  {a.isLocal && (
+                    <span className="absolute top-2 right-2 z-10 text-[9px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground font-medium uppercase tracking-wider">Local</span>
+                  )}
+                  <MediaCardSquare
+                    title={a.title}
+                    subtitle={`${a.year ?? ''} • ${a.artist?.name ?? ''}`.replace(/^ • | • $/g, '')}
+                    color={a.coverColor}
+                    onClick={() => a.isLocal ? handlePlayLocalAlbum(a) : navigate({ kind: 'album', id: a.id })}
+                    onPlay={() => a.isLocal ? handlePlayLocalAlbum(a) : navigate({ kind: 'album', id: a.id })}
+                  />
+                </div>
               ))}
             </div>
           ) : (
@@ -70,15 +159,18 @@ export function MusicView() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-full" />)}
             </div>
-          ) : artistsData && artistsData.items.length > 0 ? (
+          ) : allArtists.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {artistsData.items.map((a) => (
+              {allArtists.map((a: any) => (
                 <button
                   key={a.id}
                   type="button"
-                  onClick={() => navigate({ kind: 'artist', id: a.id })}
-                  className="group flex flex-col items-center p-4 rounded-lg bg-card hover:bg-card/80 transition cursor-pointer text-center"
+                  onClick={() => !a.isLocal && navigate({ kind: 'artist', id: a.id })}
+                  className="group flex flex-col items-center p-4 rounded-lg bg-card hover:bg-card/80 transition cursor-pointer text-center relative"
                 >
+                  {a.isLocal && (
+                    <span className="absolute top-2 right-2 text-[9px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground font-medium uppercase tracking-wider">Local</span>
+                  )}
                   <div
                     className="w-24 h-24 rounded-full mb-3 flex items-center justify-center text-2xl font-bold text-white shadow-lg group-hover:scale-105 transition"
                     style={{

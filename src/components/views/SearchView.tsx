@@ -2,8 +2,9 @@
 
 'use client';
 
+import { useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useNav, useVideoPlayer, useAudioPlayer } from '@/lib/store';
+import { useNav, useVideoPlayer, useAudioPlayer, useLocalLibraries } from '@/lib/store';
 import { MediaCard, MediaCardSquare } from '@/components/media/MediaCard';
 import { Search as SearchIcon, Film, Tv, Music, Mic, BookHeadphones, User } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -24,6 +25,84 @@ export function SearchView({ query }: { query: string }) {
   const navigate = useNav((s) => s.navigate);
   const openVideo = useVideoPlayer((s) => s.openPlayer);
   const playAudio = useAudioPlayer((s) => s.playNow);
+  const localItems = useLocalLibraries((s) => s.items);
+
+  // Filter local items by query
+  const localMatches = useMemo(() => {
+    if (!query.trim()) return { movies: [], shows: [], albums: [], artists: [], tracks: [], podcasts: [], audiobooks: [] };
+    const q = query.toLowerCase();
+    const movies: any[] = [];
+    const showsMap = new Map<string, any>();
+    const albumsMap = new Map<string, any>();
+    const artistsMap = new Map<string, any>();
+    const tracks: any[] = [];
+    const podcastsMap = new Map<string, any>();
+    const audiobooks: any[] = [];
+
+    for (const i of localItems) {
+      const titleMatch = i.title.toLowerCase().includes(q);
+      const showMatch = i.showTitle?.toLowerCase().includes(q);
+      const albumMatch = i.album?.toLowerCase().includes(q);
+      const artistMatch = i.artist?.toLowerCase().includes(q);
+      const podcastMatch = i.podcastTitle?.toLowerCase().includes(q);
+      const authorMatch = i.author?.toLowerCase().includes(q);
+
+      if (!titleMatch && !showMatch && !albumMatch && !artistMatch && !podcastMatch && !authorMatch) continue;
+
+      switch (i.mediaType) {
+        case 'movie':
+          movies.push({ id: i.id, title: i.title, year: i.year, genre: i.genre, posterColor: i.color, isLocal: true });
+          break;
+        case 'episode': {
+          if (!showsMap.has(i.showTitle)) {
+            showsMap.set(i.showTitle, { id: 'local_show_' + i.showTitle, title: i.showTitle, year: undefined, genre: undefined, posterColor: i.color, isLocal: true });
+          }
+          break;
+        }
+        case 'track': {
+          tracks.push({ id: i.id, title: i.title, duration: i.duration, album: { id: 'local_album_' + i.album, title: i.album, coverColor: i.color }, artist: { id: 'local_artist_' + i.artist, name: i.artist }, isLocal: true });
+          const albumKey = i.album + '|' + i.artist;
+          if (!albumsMap.has(albumKey)) {
+            albumsMap.set(albumKey, { id: 'local_album_' + albumKey, title: i.album, year: undefined, genre: undefined, coverColor: i.color, artist: { id: 'local_artist_' + i.artist, name: i.artist }, isLocal: true });
+          }
+          if (!artistsMap.has(i.artist)) {
+            artistsMap.set(i.artist, { id: 'local_artist_' + i.artist, name: i.artist, imageColor: i.color, isLocal: true });
+          }
+          break;
+        }
+        case 'podcast-episode': {
+          if (!podcastsMap.has(i.podcastTitle)) {
+            podcastsMap.set(i.podcastTitle, { id: 'local_podcast_' + i.podcastTitle, title: i.podcastTitle, author: undefined, coverColor: i.color, isLocal: true });
+          }
+          break;
+        }
+        case 'audiobook':
+          audiobooks.push({ id: i.id, title: i.title, author: i.author, narrator: i.narrator, coverColor: i.color, isLocal: true });
+          break;
+      }
+    }
+    return {
+      movies,
+      shows: Array.from(showsMap.values()),
+      albums: Array.from(albumsMap.values()),
+      artists: Array.from(artistsMap.values()),
+      tracks,
+      podcasts: Array.from(podcastsMap.values()),
+      audiobooks,
+    };
+  }, [query, localItems]);
+
+  // Merge server results with local results
+  const merged = {
+    movies: [...(data?.movies ?? []), ...localMatches.movies],
+    shows: [...(data?.shows ?? []), ...localMatches.shows],
+    albums: [...(data?.albums ?? []), ...localMatches.albums],
+    artists: [...(data?.artists ?? []), ...localMatches.artists],
+    tracks: [...(data?.tracks ?? []), ...localMatches.tracks],
+    podcasts: [...(data?.podcasts ?? []), ...localMatches.podcasts],
+    audiobooks: [...(data?.audiobooks ?? []), ...localMatches.audiobooks],
+  };
+  const totalResults = merged.movies.length + merged.shows.length + merged.albums.length + merged.artists.length + merged.tracks.length + merged.podcasts.length + merged.audiobooks.length;
 
   if (!query.trim()) {
     return (
@@ -53,7 +132,7 @@ export function SearchView({ query }: { query: string }) {
     );
   }
 
-  if (!data || data.totalResults === 0) {
+  if (totalResults === 0) {
     return (
       <div className="px-4 md:px-8 py-12">
         <div className="text-center py-16">
@@ -68,21 +147,30 @@ export function SearchView({ query }: { query: string }) {
   return (
     <div className="px-4 md:px-8 py-6 pb-12">
       <h1 className="text-2xl font-bold mb-1">Search results for &ldquo;{query}&rdquo;</h1>
-      <p className="text-muted-foreground text-sm mb-8">{data.totalResults} result{data.totalResults !== 1 ? 's' : ''}</p>
+      <p className="text-muted-foreground text-sm mb-8">{totalResults} result{totalResults !== 1 ? 's' : ''}</p>
 
       <div className="space-y-10">
         {/* Movies */}
-        {data.movies.length > 0 && (
+        {merged.movies.length > 0 && (
           <SearchSection icon={Film} title="Movies">
-            {data.movies.map((m) => (
+            {merged.movies.map((m) => (
               <div key={m.id} className="w-[140px] md:w-[160px] flex-shrink-0">
                 <MediaCard
                   title={m.title}
-                  subtitle={`${m.year ?? ''} • ${m.genre ?? ''}`}
+                  subtitle={`${m.year ?? ''} • ${m.genre ?? ''}${m.isLocal ? ' • Local' : ''}`}
                   color={m.posterColor}
                   rating={m.rating}
                   year={m.year}
-                  onClick={() => navigate({ kind: 'movie', id: m.id })}
+                  onClick={() => m.isLocal ? openVideo({
+                    id: m.id, type: 'movie', title: m.title, isLocal: true,
+                    subtitle: [m.year, m.genre].filter(Boolean).join(' • '),
+                    color: m.posterColor,
+                  }) : navigate({ kind: 'movie', id: m.id })}
+                  onPlay={m.isLocal ? () => openVideo({
+                    id: m.id, type: 'movie', title: m.title, isLocal: true,
+                    subtitle: [m.year, m.genre].filter(Boolean).join(' • '),
+                    color: m.posterColor,
+                  }) : undefined}
                 />
               </div>
             ))}
@@ -90,9 +178,9 @@ export function SearchView({ query }: { query: string }) {
         )}
 
         {/* TV Shows */}
-        {data.shows.length > 0 && (
+        {merged.shows.length > 0 && (
           <SearchSection icon={Tv} title="TV Shows">
-            {data.shows.map((s) => (
+            {merged.shows.map((s) => (
               <div key={s.id} className="w-[140px] md:w-[160px] flex-shrink-0">
                 <MediaCard
                   title={s.title}
@@ -108,9 +196,9 @@ export function SearchView({ query }: { query: string }) {
         )}
 
         {/* Albums */}
-        {data.albums.length > 0 && (
+        {merged.albums.length > 0 && (
           <SearchSection icon={Music} title="Albums">
-            {data.albums.map((a) => (
+            {merged.albums.map((a) => (
               <div key={a.id} className="w-[140px] md:w-[160px] flex-shrink-0">
                 <MediaCardSquare
                   title={a.title}
@@ -124,9 +212,9 @@ export function SearchView({ query }: { query: string }) {
         )}
 
         {/* Artists */}
-        {data.artists.length > 0 && (
+        {merged.artists.length > 0 && (
           <SearchSection icon={User} title="Artists">
-            {data.artists.map((a) => (
+            {merged.artists.map((a) => (
               <div key={a.id} className="w-[140px] md:w-[160px] flex-shrink-0">
                 <button
                   type="button"
@@ -147,14 +235,14 @@ export function SearchView({ query }: { query: string }) {
         )}
 
         {/* Tracks */}
-        {data.tracks.length > 0 && (
+        {merged.tracks.length > 0 && (
           <SearchSection icon={Music} title="Tracks">
             <div className="w-full space-y-1">
-              {data.tracks.map((t) => (
+              {merged.tracks.map((t) => (
                 <div
                   key={t.id}
                   onClick={() => playAudio([{
-                    id: t.id, type: 'track', title: t.title,
+                    id: t.id, type: 'track', title: t.title, isLocal: !!t.isLocal,
                     subtitle: t.artist?.name ?? 'Unknown',
                     duration: t.duration, color: t.album?.coverColor,
                     albumId: t.album?.id,
@@ -170,7 +258,7 @@ export function SearchView({ query }: { query: string }) {
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm truncate">{t.title}</div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {t.artist?.name} • {t.album?.title}
+                      {t.artist?.name} • {t.album?.title}{t.isLocal ? ' • Local' : ''}
                     </div>
                   </div>
                 </div>
@@ -180,9 +268,9 @@ export function SearchView({ query }: { query: string }) {
         )}
 
         {/* Podcasts */}
-        {data.podcasts.length > 0 && (
+        {merged.podcasts.length > 0 && (
           <SearchSection icon={Mic} title="Podcasts">
-            {data.podcasts.map((p) => (
+            {merged.podcasts.map((p) => (
               <div key={p.id} className="w-[140px] md:w-[160px] flex-shrink-0">
                 <button
                   type="button"
@@ -204,9 +292,9 @@ export function SearchView({ query }: { query: string }) {
         )}
 
         {/* Audiobooks */}
-        {data.audiobooks.length > 0 && (
+        {merged.audiobooks.length > 0 && (
           <SearchSection icon={BookHeadphones} title="Audiobooks">
-            {data.audiobooks.map((a) => (
+            {merged.audiobooks.map((a) => (
               <div key={a.id} className="w-[140px] md:w-[160px] flex-shrink-0">
                 <MediaCard
                   title={a.title}

@@ -4,8 +4,8 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useAudioPlayer, useNav } from '@/lib/store';
-import { streamUrl, formatDuration } from '@/lib/format';
+import { useAudioPlayer, useNav, useLocalLibraries } from '@/lib/store';
+import { streamUrl, formatDuration, isLocalId } from '@/lib/format';
 import { putJson } from '@/lib/useApi';
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, VolumeX,
@@ -34,6 +34,7 @@ export function AudioPlayerBar() {
     setNowPlayingOpen, clearQueue,
   } = useAudioPlayer();
   const navigate = useNav((s) => s.navigate);
+  const getLocalItem = useLocalLibraries((s) => s.getLocalItem);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastReportedItem = useRef<string | null>(null);
@@ -58,20 +59,39 @@ export function AudioPlayerBar() {
     lastReportedItem.current = null;
   }, [current?.id]);
 
-  // Load + autoplay when current changes
+  // Load + autoplay when current changes.
+  // For server items: use the streaming API URL directly.
+  // For local items: resolve a blob URL from the file handle.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !current) return;
 
-    audio.src = streamUrl(STREAM_TYPE_MAP[current.type], current.id);
-    audio.load();
+    let cancelled = false;
+    const loadAndPlay = (url: string) => {
+      if (cancelled) return;
+      audio.src = url;
+      audio.load();
+      audio.play()
+        .then(() => setPlaying(true))
+        .catch(() => setPlaying(false));
+    };
 
-    // Restore start position if we have progress (not implemented here for simplicity — start fresh)
-    audio.play()
-      .then(() => setPlaying(true))
-      .catch(() => setPlaying(false));
+    if (current.isLocal && isLocalId(current.id)) {
+      const localItem = getLocalItem(current.id);
+      if (!localItem) {
+        setPlaying(false);
+        return;
+      }
+      import('@/lib/local-library').then((ll) => ll.getLocalBlobUrl(localItem))
+        .then((url) => loadAndPlay(url))
+        .catch(() => setPlaying(false));
+    } else {
+      loadAndPlay(streamUrl(STREAM_TYPE_MAP[current.type], current.id));
+    }
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.id]);
+  }, [current?.id, current?.isLocal]);
 
   // Periodic progress reporting
   useEffect(() => {
@@ -79,6 +99,8 @@ export function AudioPlayerBar() {
     const interval = setInterval(async () => {
       const audio = audioRef.current;
       if (!audio) return;
+      // Skip server-side progress reporting for local items
+      if (current.isLocal) return;
       try {
         await putJson(`/api/progress/${PROGRESS_MEDIA_TYPE_MAP[current.type]}/${current.id}`, {
           position: Math.floor(audio.currentTime),
@@ -88,7 +110,7 @@ export function AudioPlayerBar() {
       } catch { /* ignore */ }
     }, PROGRESS_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [current?.id]);
+  }, [current?.id, current?.isLocal]);
 
   // Handle audio ending
   const handleEnded = useCallback(() => {
@@ -116,6 +138,8 @@ export function AudioPlayerBar() {
   const reportFinalProgress = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio || !current) return;
+    // Skip server-side progress reporting for local items
+    if (current.isLocal) return;
     try {
       await putJson(`/api/progress/${PROGRESS_MEDIA_TYPE_MAP[current.type]}/${current.id}`, {
         position: Math.floor(audio.currentTime),

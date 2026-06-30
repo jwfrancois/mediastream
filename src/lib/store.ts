@@ -2,6 +2,7 @@
 'use client';
 
 import { create } from 'zustand';
+import type { LocalLibrary, LocalMediaItem, LocalLibraryType } from './local-library';
 
 // ----------- Navigation -----------
 export type ViewType =
@@ -100,6 +101,8 @@ export interface AudioQueueItem {
   subtitle: string; // artist / podcast / author
   duration?: number | null;
   color?: string | null;
+  // Whether this is a local (browser-side) media item — playback uses a blob URL
+  isLocal?: boolean;
   // Context info for navigation
   albumId?: string;
   podcastId?: string;
@@ -177,8 +180,10 @@ export interface VideoPlayerItem {
   duration?: number | null;
   startPosition?: number;
   color?: string | null;
+  // Whether this is a local (browser-side) media item — playback uses a blob URL
+  isLocal?: boolean;
   // For episodes: list of all episodes in the season for "next episode" support
-  queue?: { id: string; type: 'movie' | 'episode'; title: string; subtitle?: string; duration?: number | null; color?: string | null }[];
+  queue?: { id: string; type: 'movie' | 'episode'; title: string; subtitle?: string; duration?: number | null; color?: string | null; isLocal?: boolean }[];
 }
 
 interface VideoPlayerState {
@@ -206,3 +211,91 @@ export function toastError(message: string) {
     window.dispatchEvent(new CustomEvent('app-toast', { detail: { type: 'error', message } }));
   }
 }
+
+// ----------- Local Libraries (File System Access API) -----------
+// State for libraries that live in the browser — scanned from the user's
+// local filesystem via showDirectoryPicker(). Persistent across reloads
+// via IndexedDB (see local-library.ts).
+
+interface LocalLibraryState {
+  libraries: LocalLibrary[];
+  items: LocalMediaItem[];
+  loaded: boolean; // true after initial hydration from IndexedDB
+  scanning: string | null; // library id currently being scanned, or null
+  adding: boolean;
+
+  hydrate: () => Promise<void>;
+  addLocalLibrary: (name: string, type: LocalLibraryType) => Promise<void>;
+  scanLocalLibrary: (id: string) => Promise<{ added: number }>;
+  removeLocalLibrary: (id: string) => Promise<void>;
+  getLocalItem: (id: string) => LocalMediaItem | undefined;
+  getLocalItemsByType: (mediaType: LocalMediaItem['mediaType']) => LocalMediaItem[];
+}
+
+export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
+  libraries: [],
+  items: [],
+  loaded: false,
+  scanning: null,
+  adding: false,
+
+  hydrate: async () => {
+    if (get().loaded) return;
+    try {
+      const [libs, items] = await Promise.all([
+        (await import('./local-library')).loadLocalLibraries(),
+        (await import('./local-library')).loadLocalItems(),
+      ]);
+      set({ libraries: libs, items, loaded: true });
+    } catch (e) {
+      console.error('Failed to load local libraries:', e);
+      set({ loaded: true });
+    }
+  },
+
+  addLocalLibrary: async (name, type) => {
+    set({ adding: true });
+    try {
+      const ll = await import('./local-library');
+      const handle = await ll.pickDirectory();
+      const lib = await ll.createLocalLibrary(name, type, handle);
+      set((s) => ({ libraries: [...s.libraries, lib] }));
+    } finally {
+      set({ adding: false });
+    }
+  },
+
+  scanLocalLibrary: async (id) => {
+    set({ scanning: id });
+    try {
+      const ll = await import('./local-library');
+      const lib = get().libraries.find((l) => l.id === id);
+      if (!lib) throw new Error('Library not found');
+      const result = await ll.scanLocalLibrary(lib);
+      // Reload items from IndexedDB
+      const items = await ll.loadLocalItems();
+      // Update library metadata
+      const updatedLib = { ...lib, lastScanAt: Date.now(), itemCount: result.added, permission: 'granted' as PermissionState };
+      set((s) => ({
+        items,
+        libraries: s.libraries.map((l) => (l.id === id ? updatedLib : l)),
+      }));
+      return { added: result.added };
+    } finally {
+      set({ scanning: null });
+    }
+  },
+
+  removeLocalLibrary: async (id) => {
+    const ll = await import('./local-library');
+    await ll.deleteLocalLibrary(id);
+    set((s) => ({
+      libraries: s.libraries.filter((l) => l.id !== id),
+      items: s.items.filter((i) => i.libraryId !== id),
+    }));
+  },
+
+  getLocalItem: (id) => get().items.find((i) => i.id === id),
+
+  getLocalItemsByType: (mediaType) => get().items.filter((i) => i.mediaType === mediaType),
+}));

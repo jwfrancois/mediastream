@@ -2,9 +2,9 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useNav, useVideoPlayer } from '@/lib/store';
+import { useNav, useVideoPlayer, useLocalLibraries } from '@/lib/store';
 import { MediaCard } from '@/components/media/MediaCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -22,9 +22,33 @@ export function MoviesView() {
   const [sort, setSort] = useState<string>('recent');
   const navigate = useNav((s) => s.navigate);
   const openVideo = useVideoPlayer((s) => s.openPlayer);
+  const localItems = useLocalLibraries((s) => s.items);
 
   const url = `/api/movies?sort=${sort}${genre !== 'all' ? `&genre=${encodeURIComponent(genre)}` : ''}`;
   const { data, loading, error } = useApi<MoviesData>(url, [genre, sort]);
+
+  // Merge local movie items with server items
+  const localMovies = useMemo(() => localItems
+    .filter((i) => i.mediaType === 'movie')
+    .map((i) => ({
+      id: i.id,
+      title: i.title,
+      year: i.year,
+      genre: i.genre,
+      rating: undefined as number | undefined,
+      duration: i.duration,
+      posterColor: i.color,
+      backdropColor: i.color,
+      plot: i.plot,
+      addedAt: new Date(i.addedAt).toISOString(),
+      isLocal: true,
+    })), [localItems]);
+
+  const allItems = [...(data?.items ?? []), ...localMovies];
+  const allGenres = Array.from(new Set([
+    ...(data?.genres ?? []),
+    ...localMovies.map((m) => m.genre).filter(Boolean) as string[],
+  ])).sort();
 
   return (
     <div className="px-4 md:px-8 py-6 pb-12">
@@ -35,7 +59,7 @@ export function MoviesView() {
             Movies
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {data ? `${data.total} movie${data.total !== 1 ? 's' : ''} in your library` : 'Loading your movie library…'}
+            {data ? `${data.total + localMovies.length} movie${(data.total + localMovies.length) !== 1 ? 's' : ''} in your library${localMovies.length > 0 ? ` (${localMovies.length} local)` : ''}` : 'Loading your movie library…'}
           </p>
         </div>
 
@@ -46,7 +70,7 @@ export function MoviesView() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All genres</SelectItem>
-              {(data?.genres ?? []).map((g) => (
+              {allGenres.map((g) => (
                 <SelectItem key={g} value={g}>{g}</SelectItem>
               ))}
             </SelectContent>
@@ -76,7 +100,7 @@ export function MoviesView() {
         <div className="text-center py-12 text-destructive">Failed to load movies: {error}</div>
       )}
 
-      {data && data.items.length === 0 && (
+      {allItems.length === 0 && !loading && (
         <div className="text-center py-16">
           <Film className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
           <p className="text-muted-foreground">No movies found in your library.</p>
@@ -86,20 +110,24 @@ export function MoviesView() {
         </div>
       )}
 
-      {data && data.items.length > 0 && (
+      {allItems.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {data.items.map((m) => (
+          {allItems.map((m: any) => (
             <MediaCard
               key={m.id}
               title={m.title}
-              subtitle={`${m.year ?? ''} • ${m.genre ?? ''}`.replace(/^ • | • $/g, '')}
+              subtitle={`${m.year ?? ''} • ${m.genre ?? ''}${m.isLocal ? ' • Local' : ''}`.replace(/^ • | • $/g, '')}
               color={m.posterColor}
               rating={m.rating}
               year={m.year}
               duration={m.duration}
-              onClick={() => navigate({ kind: 'movie', id: m.id })}
+              onClick={() => m.isLocal ? openVideo({
+                id: m.id, type: 'movie', title: m.title, isLocal: true,
+                subtitle: [m.year, m.genre].filter(Boolean).join(' • '),
+                duration: m.duration, color: m.backdropColor,
+              }) : navigate({ kind: 'movie', id: m.id })}
               onPlay={() => openVideo({
-                id: m.id, type: 'movie', title: m.title,
+                id: m.id, type: 'movie', title: m.title, isLocal: !!m.isLocal,
                 subtitle: [m.year, m.genre].filter(Boolean).join(' • '),
                 duration: m.duration, color: m.backdropColor,
               })}
