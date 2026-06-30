@@ -222,11 +222,13 @@ interface LocalLibraryState {
   items: LocalMediaItem[];
   loaded: boolean; // true after initial hydration from IndexedDB
   scanning: string | null; // library id currently being scanned, or null
+  enriching: string | null; // library id currently being enriched, or null
   adding: boolean;
 
   hydrate: () => Promise<void>;
   addLocalLibrary: (name: string, type: LocalLibraryType) => Promise<void>;
   scanLocalLibrary: (id: string) => Promise<{ added: number; skipped: number }>;
+  enrichLibrary: (id: string, onProgress?: (done: number, total: number) => void) => Promise<{ enriched: number }>;
   removeLocalLibrary: (id: string) => Promise<void>;
   getLocalItem: (id: string) => LocalMediaItem | undefined;
   getLocalItemsByType: (mediaType: LocalMediaItem['mediaType']) => LocalMediaItem[];
@@ -237,6 +239,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
   items: [],
   loaded: false,
   scanning: null,
+  enriching: null,
   adding: false,
 
   hydrate: async () => {
@@ -283,6 +286,141 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
       return { added: result.added, skipped: result.skipped };
     } finally {
       set({ scanning: null });
+    }
+  },
+
+  enrichLibrary: async (id, onProgress) => {
+    set({ enriching: id });
+    try {
+      const ll = await import('./local-library');
+      const lib = get().libraries.find((l) => l.id === id);
+      if (!lib) throw new Error('Library not found');
+
+      // Gather items for this library that haven't been enriched yet
+      const allItems = get().items.filter((i) => i.libraryId === id);
+      // For TV, deduplicate by showTitle so we only enrich each show once
+      let itemsToEnrich: LocalMediaItem[];
+      if (lib.type === 'TV') {
+        const seenShows = new Set<string>();
+        itemsToEnrich = allItems.filter((i) => {
+          if (i.enriched) return false;
+          const key = i.showTitle ?? i.title;
+          if (seenShows.has(key)) return false;
+          seenShows.add(key);
+          return true;
+        });
+      } else {
+        itemsToEnrich = allItems.filter((i) => !i.enriched);
+      }
+
+      if (itemsToEnrich.length === 0) {
+        return { enriched: 0 };
+      }
+
+      // Map library type to the API's type parameter
+      const apiType = lib.type; // MOVIE | TV | AUDIOBOOK | MUSIC | PODCAST
+
+      // Process in batches of 30 to respect token limits
+      const BATCH_SIZE = 30;
+      let enrichedCount = 0;
+      let done = 0;
+      const total = itemsToEnrich.length;
+
+      for (let i = 0; i < itemsToEnrich.length; i += BATCH_SIZE) {
+        const batch = itemsToEnrich.slice(i, i + BATCH_SIZE);
+        const requestItems = batch.map((item) => ({
+          id: item.id,
+          title: item.title,
+          year: item.year,
+          showTitle: item.showTitle,
+          seasonNumber: item.seasonNumber,
+          episodeNumber: item.episodeNumber,
+        }));
+
+        try {
+          const res = await fetch('/api/enrich', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: apiType, items: requestItems }),
+          });
+          if (!res.ok) {
+            const errBody = await res.text().catch(() => res.statusText);
+            throw new Error(`Enrich API ${res.status}: ${errBody}`);
+          }
+          const data = await res.json() as { items: Array<any> };
+
+          // Build a lookup of enriched data by id
+          const enrichedMap = new Map<string, any>(data.items.map((e: any) => [e.id, e]));
+
+          // Merge enrichment data into items and persist.
+          // For TV: apply the show-level metadata to ALL episodes of that show.
+          if (lib.type === 'TV') {
+            for (const enrichedItem of data.items) {
+              const sourceItem = batch.find((b) => b.id === enrichedItem.id);
+              if (!sourceItem) continue;
+              const showName = sourceItem.showTitle ?? sourceItem.title;
+              // Find all episodes of this show in the full items list
+              const showEpisodes = get().items.filter(
+                (it) => it.libraryId === id && (it.showTitle ?? it.title) === showName,
+              );
+              for (const ep of showEpisodes) {
+                const updated: LocalMediaItem = {
+                  ...ep,
+                  enriched: true,
+                  plot: enrichedItem.plot ?? ep.plot,
+                  genre: enrichedItem.genre ?? ep.genre,
+                  year: enrichedItem.year ?? ep.year,
+                  director: enrichedItem.director ?? ep.director,
+                  cast: enrichedItem.cast ?? ep.cast,
+                  rating: enrichedItem.rating ?? ep.rating,
+                  collection: enrichedItem.collection ?? ep.collection,
+                  collectionOrder: enrichedItem.collectionOrder ?? ep.collectionOrder,
+                  backdropColor: ep.backdropColor ?? ll.colorFromString(showName + ' backdrop'),
+                };
+                await ll.updateLocalItem(updated);
+              }
+              enrichedCount += showEpisodes.length;
+            }
+          } else {
+            // Movies / audiobooks / etc — update each item directly
+            for (const sourceItem of batch) {
+              const enrichedItem = enrichedMap.get(sourceItem.id);
+              if (!enrichedItem) continue;
+              const updated: LocalMediaItem = {
+                ...sourceItem,
+                enriched: true,
+                plot: enrichedItem.plot ?? sourceItem.plot,
+                genre: enrichedItem.genre ?? sourceItem.genre,
+                year: enrichedItem.year ?? sourceItem.year,
+                director: enrichedItem.director ?? sourceItem.director,
+                cast: enrichedItem.cast ?? sourceItem.cast,
+                rating: enrichedItem.rating ?? sourceItem.rating,
+                collection: enrichedItem.collection ?? sourceItem.collection,
+                collectionOrder: enrichedItem.collectionOrder ?? sourceItem.collectionOrder,
+                backdropColor: sourceItem.backdropColor ?? ll.colorFromString(sourceItem.title + ' backdrop'),
+              };
+              await ll.updateLocalItem(updated);
+              enrichedCount++;
+            }
+          }
+
+          done += batch.length;
+          onProgress?.(done, total);
+
+          // Refresh the in-memory items from IndexedDB periodically
+          const refreshedItems = await ll.loadLocalItems();
+          set({ items: refreshedItems });
+        } catch (e) {
+          console.error(`Enrichment batch failed (items ${i}-${i + batch.length}):`, e);
+          // Continue with next batch instead of failing entirely
+          done += batch.length;
+          onProgress?.(done, total);
+        }
+      }
+
+      return { enriched: enrichedCount };
+    } finally {
+      set({ enriching: null });
     }
   },
 

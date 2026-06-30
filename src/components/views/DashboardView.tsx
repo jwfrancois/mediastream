@@ -2,12 +2,13 @@
 
 'use client';
 
+import { useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useNav, useVideoPlayer, useAudioPlayer, type AudioQueueItem } from '@/lib/store';
+import { useNav, useVideoPlayer, useAudioPlayer, useLocalLibraries, type AudioQueueItem } from '@/lib/store';
 import { MediaRow } from '@/components/media/MediaRow';
 import { MediaCard, MediaCardLandscape, MediaCardSquare } from '@/components/media/MediaCard';
 import { MediaBackdrop } from '@/components/media/MediaPoster';
-import { Play, Info, ChevronRight, Film, Tv, Music, Mic, BookHeadphones, TrendingUp } from 'lucide-react';
+import { Play, Info, ChevronRight, Film, Tv, Music, Mic, BookHeadphones, TrendingUp, HardDrive, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDurationShort, formatProgress, streamUrl } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -40,6 +41,105 @@ export function DashboardView() {
   const navigate = useNav((s) => s.navigate);
   const openVideo = useVideoPlayer((s) => s.openPlayer);
   const playAudio = useAudioPlayer((s) => s.playNow);
+  const localItems = useLocalLibraries((s) => s.items);
+  const localLibs = useLocalLibraries((s) => s.libraries);
+
+  // Build local "recent" items grouped by type
+  const localRecent = useMemo(() => {
+    const movies = localItems.filter((i) => i.mediaType === 'movie')
+      .sort((a, b) => b.addedAt - a.addedAt)
+      .slice(0, 12)
+      .map((i) => ({
+        id: i.id, title: i.title, year: i.year, genre: i.genre,
+        rating: i.rating, posterColor: i.color, backdropColor: i.backdropColor ?? i.color,
+        plot: i.plot, duration: i.duration, addedAt: new Date(i.addedAt).toISOString(),
+        collection: i.collection, isLocal: true,
+      }));
+    // TV shows (dedup by showTitle)
+    const seenShows = new Set<string>();
+    const shows = localItems
+      .filter((i) => i.mediaType === 'episode')
+      .sort((a, b) => b.addedAt - a.addedAt)
+      .filter((i) => {
+        const key = i.showTitle ?? i.title;
+        if (seenShows.has(key)) return false;
+        seenShows.add(key);
+        return true;
+      })
+      .slice(0, 12)
+      .map((i) => {
+        const showName = i.showTitle ?? i.title;
+        const eps = localItems.filter((x) => (x.showTitle ?? x.title) === showName && x.mediaType === 'episode');
+        const seasons = new Set(eps.map((e) => e.seasonNumber).filter(Boolean));
+        return {
+          id: 'local_show_' + showName, title: showName, year: i.year, genre: i.genre,
+          rating: i.rating, posterColor: i.color, plot: i.plot,
+          episodeCount: eps.length, seasonCount: seasons.size,
+          addedAt: new Date(i.addedAt).toISOString(), isLocal: true,
+        };
+      });
+    // Albums (dedup by album|artist)
+    const seenAlbums = new Set<string>();
+    const albums = localItems
+      .filter((i) => i.mediaType === 'track')
+      .sort((a, b) => b.addedAt - a.addedAt)
+      .filter((i) => {
+        const key = (i.album ?? '') + '|' + (i.artist ?? '');
+        if (seenAlbums.has(key)) return false;
+        seenAlbums.add(key);
+        return true;
+      })
+      .slice(0, 12)
+      .map((i) => {
+        const albumKey = (i.album ?? '') + '|' + (i.artist ?? '');
+        const tracks = localItems.filter((x) => (x.album ?? '') + '|' + (x.artist ?? '') === albumKey && x.mediaType === 'track');
+        return {
+          id: 'local_album_' + albumKey, title: i.album, year: undefined, genre: undefined,
+          coverColor: i.color, addedAt: new Date(i.addedAt).toISOString(),
+          artist: { id: 'local_artist_' + i.artist, name: i.artist },
+          trackCount: tracks.length, isLocal: true,
+        };
+      });
+    // Podcasts (dedup by podcastTitle)
+    const seenPods = new Set<string>();
+    const podcasts = localItems
+      .filter((i) => i.mediaType === 'podcast-episode')
+      .sort((a, b) => b.addedAt - a.addedAt)
+      .filter((i) => {
+        const key = i.podcastTitle ?? i.title;
+        if (seenPods.has(key)) return false;
+        seenPods.add(key);
+        return true;
+      })
+      .slice(0, 12)
+      .map((i) => {
+        const podName = i.podcastTitle ?? i.title;
+        const eps = localItems.filter((x) => (x.podcastTitle ?? x.title) === podName && x.mediaType === 'podcast-episode');
+        return {
+          id: 'local_pod_' + podName, title: podName, author: undefined,
+          coverColor: i.color, addedAt: new Date(i.addedAt).toISOString(),
+          episodeCount: eps.length, isLocal: true,
+        };
+      });
+    const audiobooks = localItems.filter((i) => i.mediaType === 'audiobook')
+      .sort((a, b) => b.addedAt - a.addedAt)
+      .slice(0, 12)
+      .map((i) => ({
+        id: i.id, title: i.title, author: i.author, narrator: i.narrator,
+        year: i.year, genre: i.genre, coverColor: i.color, duration: i.duration,
+        description: i.plot, isLocal: true,
+      }));
+    return { movies, shows, albums, podcasts, audiobooks };
+  }, [localItems]);
+
+  // Build local collections for the hero (pick highest-rated enriched movie)
+  const localHero = useMemo(() => {
+    const enriched = localItems.filter((i) => i.mediaType === 'movie' && i.enriched && i.rating);
+    if (enriched.length === 0) return null;
+    enriched.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+    const top = enriched[0];
+    return { type: 'movie', ...top, backdropColor: top.backdropColor ?? top.color };
+  }, [localItems]);
 
   const handlePlayContinue = (item: any) => {
     const startPosition = item.position || 0;
@@ -118,7 +218,55 @@ export function DashboardView() {
 
   if (!data) return null;
 
-  const { hero, continueWatching, recent, stats } = data;
+  const { continueWatching } = data;
+  // Merge server hero with local hero (prefer server if available, else local)
+  const hero = data.hero ?? localHero;
+  // Merge recent rails
+  const recent = {
+    movies: [...localRecent.movies, ...(data.recent?.movies ?? [])].slice(0, 12),
+    shows: [...localRecent.shows, ...(data.recent?.shows ?? [])].slice(0, 12),
+    albums: [...localRecent.albums, ...(data.recent?.albums ?? [])].slice(0, 12),
+    podcasts: [...localRecent.podcasts, ...(data.recent?.podcasts ?? [])].slice(0, 12),
+    audiobooks: [...localRecent.audiobooks, ...(data.recent?.audiobooks ?? [])].slice(0, 12),
+  };
+  // Merge stats
+  const stats = {
+    movies: (data.stats?.movies ?? 0) + localRecent.movies.length,
+    shows: (data.stats?.shows ?? 0) + localRecent.shows.length,
+    episodes: (data.stats?.episodes ?? 0) + localItems.filter((i) => i.mediaType === 'episode').length,
+    albums: (data.stats?.albums ?? 0) + localRecent.albums.length,
+    tracks: (data.stats?.tracks ?? 0) + localItems.filter((i) => i.mediaType === 'track').length,
+    podcasts: (data.stats?.podcasts ?? 0) + localRecent.podcasts.length,
+    podcastEpisodes: (data.stats?.podcastEpisodes ?? 0) + localItems.filter((i) => i.mediaType === 'podcast-episode').length,
+    audiobooks: (data.stats?.audiobooks ?? 0) + localRecent.audiobooks.length,
+    libraries: (data.stats?.libraries ?? 0) + localLibs.length,
+  };
+
+  // Check if there's any media at all
+  const hasAnyMedia =
+    stats.movies > 0 || stats.shows > 0 || stats.albums > 0 ||
+    stats.podcasts > 0 || stats.audiobooks > 0;
+
+  // If no media at all, show welcome state
+  if (!hasAnyMedia) {
+    return (
+      <div className="px-4 md:px-8 py-12 max-w-3xl mx-auto text-center">
+        <div className="mb-8">
+          <div className="w-20 h-20 rounded-2xl bg-primary/15 flex items-center justify-center mx-auto mb-4">
+            <HardDrive className="w-10 h-10 text-primary" />
+          </div>
+          <h1 className="text-3xl md:text-4xl font-bold mb-3">Welcome to MediaStream</h1>
+          <p className="text-muted-foreground text-lg max-w-xl mx-auto">
+            Your libraries are empty. Add a local folder to start scanning your movies, TV shows, music, podcasts, and audiobooks — files stream directly from your computer, nothing is uploaded.
+          </p>
+        </div>
+        <Button size="lg" onClick={() => navigate({ kind: 'settings' })} className="bg-primary hover:bg-primary/90">
+          <HardDrive className="w-5 h-5 mr-2" />
+          Add Your First Library
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="pb-8">
@@ -140,6 +288,7 @@ export function DashboardView() {
                       id: hero.id,
                       type: 'movie',
                       title: hero.title,
+                      isLocal: !!(hero as any).isLocal,
                       subtitle: [hero.year, hero.genre].filter(Boolean).join(' • '),
                       duration: hero.duration,
                       color: hero.backdropColor,

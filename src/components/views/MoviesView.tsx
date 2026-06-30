@@ -1,4 +1,5 @@
-// Movies browser — Netflix-style grid with genre filter and sort options.
+// Movies browser — Netflix-style grid with genre filter, sort options, and
+// Collections section (franchises/sequels grouped together).
 
 'use client';
 
@@ -6,10 +7,12 @@ import { useState, useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
 import { useNav, useVideoPlayer, useLocalLibraries } from '@/lib/store';
 import { MediaCard } from '@/components/media/MediaCard';
+import { MediaRow } from '@/components/media/MediaRow';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Film } from 'lucide-react';
+import { Film, FolderTree as CollectionIcon } from 'lucide-react';
+import { formatDurationShort } from '@/lib/format';
 
 interface MoviesData {
   items: any[];
@@ -17,9 +20,28 @@ interface MoviesData {
   genres: string[];
 }
 
+interface LocalMovie {
+  id: string;
+  title: string;
+  year?: number;
+  genre?: string;
+  rating?: number;
+  duration?: number;
+  posterColor: string;
+  backdropColor: string;
+  plot?: string;
+  director?: string;
+  cast?: string[];
+  collection?: string;
+  collectionOrder?: number;
+  addedAt: string;
+  isLocal: boolean;
+}
+
 export function MoviesView() {
   const [genre, setGenre] = useState<string>('all');
   const [sort, setSort] = useState<string>('recent');
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const navigate = useNav((s) => s.navigate);
   const openVideo = useVideoPlayer((s) => s.openPlayer);
   const localItems = useLocalLibraries((s) => s.items);
@@ -28,27 +50,56 @@ export function MoviesView() {
   const { data, loading, error } = useApi<MoviesData>(url, [genre, sort]);
 
   // Merge local movie items with server items
-  const localMovies = useMemo(() => localItems
+  const localMovies: LocalMovie[] = useMemo(() => localItems
     .filter((i) => i.mediaType === 'movie')
     .map((i) => ({
       id: i.id,
       title: i.title,
       year: i.year,
       genre: i.genre,
-      rating: undefined as number | undefined,
+      rating: i.rating,
       duration: i.duration,
       posterColor: i.color,
-      backdropColor: i.color,
+      backdropColor: i.backdropColor ?? i.color,
       plot: i.plot,
+      director: i.director,
+      cast: i.cast,
+      collection: i.collection,
+      collectionOrder: i.collectionOrder,
       addedAt: new Date(i.addedAt).toISOString(),
       isLocal: true,
     })), [localItems]);
 
-  const allItems = [...(data?.items ?? []), ...localMovies];
+  const allItems: LocalMovie[] = [...(data?.items ?? []), ...localMovies];
   const allGenres = Array.from(new Set([
     ...(data?.genres ?? []),
     ...localMovies.map((m) => m.genre).filter(Boolean) as string[],
   ])).sort();
+
+  // Build collections map (only from local movies that have a collection field)
+  const collections = useMemo(() => {
+    const map = new Map<string, LocalMovie[]>();
+    for (const m of localMovies) {
+      if (!m.collection) continue;
+      const list = map.get(m.collection) ?? [];
+      list.push(m);
+      map.set(m.collection, list);
+    }
+    // Sort each collection by collectionOrder
+    for (const [name, movies] of map) {
+      movies.sort((a, b) => (a.collectionOrder ?? 999) - (b.collectionOrder ?? 999));
+      map.set(name, movies);
+    }
+    return Array.from(map.entries())
+      .map(([name, movies]) => ({ name, movies, count: movies.length }))
+      .filter((c) => c.count >= 1)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [localMovies]);
+
+  // If a collection is selected, show only those movies
+  const displayedItems = selectedCollection
+    ? allItems.filter((m) => m.collection === selectedCollection)
+    : allItems;
 
   return (
     <div className="px-4 md:px-8 py-6 pb-12">
@@ -88,6 +139,68 @@ export function MoviesView() {
         </div>
       </div>
 
+      {selectedCollection && (
+        <div className="mb-4 flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setSelectedCollection(null)}>
+            ← All Movies
+          </Button>
+          <h2 className="text-xl font-bold">{selectedCollection}</h2>
+          <span className="text-sm text-muted-foreground">{displayedItems.length} film{displayedItems.length !== 1 ? 's' : ''}</span>
+        </div>
+      )}
+
+      {/* Collections rail — shown above the grid when not viewing a specific collection */}
+      {!selectedCollection && collections.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-lg font-bold mb-3 flex items-center gap-2">
+            <CollectionIcon className="w-5 h-5 text-primary" />
+            Collections
+          </h2>
+          <div className="no-scrollbar flex gap-3 overflow-x-auto pb-2">
+            {collections.map((col) => {
+              const firstMovie = col.movies[0];
+              return (
+                <button
+                  key={col.name}
+                  type="button"
+                  onClick={() => setSelectedCollection(col.name)}
+                  className="group relative w-[200px] md:w-[240px] flex-shrink-0 rounded-lg overflow-hidden cursor-pointer"
+                  style={{
+                    background: `linear-gradient(135deg, ${firstMovie?.backdropColor ?? '#333'} 0%, #111 100%)`,
+                    aspectRatio: '16/9',
+                  }}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                  <div className="absolute inset-0 p-4 flex flex-col justify-end">
+                    <div className="font-bold text-white text-base leading-tight line-clamp-2 drop-shadow">
+                      {col.name}
+                    </div>
+                    <div className="text-white/70 text-xs mt-1">
+                      {col.count} film{col.count !== 1 ? 's' : ''}
+                    </div>
+                  </div>
+                  {/* Thumbnail strip of first 3 movie titles */}
+                  <div className="absolute top-3 right-3 flex gap-1">
+                    {col.movies.slice(0, 3).map((m, i) => (
+                      <div
+                        key={m.id}
+                        className="w-2 h-2 rounded-full bg-white/60"
+                        style={{ opacity: 1 - i * 0.25 }}
+                      />
+                    ))}
+                  </div>
+                  <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/10 transition" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!selectedCollection && (
+        <h2 className="text-lg font-bold mb-3">All Movies</h2>
+      )}
+
       {loading && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {Array.from({ length: 18 }).map((_, i) => (
@@ -110,9 +223,9 @@ export function MoviesView() {
         </div>
       )}
 
-      {allItems.length > 0 && (
+      {displayedItems.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {allItems.map((m: any) => (
+          {displayedItems.map((m: LocalMovie) => (
             <MediaCard
               key={m.id}
               title={m.title}

@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Library, Plus, RefreshCw, Trash2, Film, Tv, Music, Mic, BookHeadphones, CheckCircle2, AlertCircle, Loader2, FolderOpen, HardDrive, Cloud } from 'lucide-react';
+import { Library, Plus, RefreshCw, Trash2, Film, Tv, Music, Mic, BookHeadphones, CheckCircle2, AlertCircle, Loader2, FolderOpen, HardDrive, Cloud, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRelativeTime } from '@/lib/format';
 import { useLocalLibraries } from '@/lib/store';
@@ -253,9 +253,10 @@ export function SettingsView() {
 // nothing is uploaded to the server. Supported in Chrome, Edge, Opera, Brave.
 
 function LocalLibrariesCard() {
-  const { libraries, items, scanning, adding, addLocalLibrary, scanLocalLibrary, removeLocalLibrary, loaded } = useLocalLibraries();
+  const { libraries, items, scanning, enriching, adding, addLocalLibrary, scanLocalLibrary, enrichLibrary, removeLocalLibrary, loaded } = useLocalLibraries();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<'MOVIE' | 'TV' | 'MUSIC' | 'PODCAST' | 'AUDIOBOOK'>('MOVIE');
+  const [enrichProgress, setEnrichProgress] = useState<{ done: number; total: number } | null>(null);
 
   const supported = typeof window !== 'undefined' && isLocalLibrarySupported();
 
@@ -291,6 +292,24 @@ function LocalLibrariesCard() {
       toast.error(e?.message || 'Scan failed');
     }
   };
+
+  const handleEnrich = async (id: string, name: string) => {
+    setEnrichProgress({ done: 0, total: 0 });
+    try {
+      const { enriched } = await enrichLibrary(id, (done, total) => setEnrichProgress({ done, total }));
+      if (enriched === 0) {
+        toast.info(`"${name}": no new items to enrich (already up to date)`);
+      } else {
+        toast.success(`Enriched "${name}": ${enriched} item${enriched !== 1 ? 's' : ''} updated with metadata${lib(id)?.type === 'MOVIE' ? ' and collection grouping' : ''}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Enrichment failed');
+    } finally {
+      setEnrichProgress(null);
+    }
+  };
+
+  const lib = (id: string) => libraries.find((l) => l.id === id);
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete local library "${name}"? This removes it from the browser. Your files on disk are not affected.`)) return;
@@ -337,7 +356,10 @@ function LocalLibrariesCard() {
               const Icon = meta.icon;
               const itemCount = items.filter((i) => i.libraryId === lib.id).length;
               const isScanning = scanning === lib.id;
+              const isEnriching = enriching === lib.id;
+              const enrichedCount = items.filter((i) => i.libraryId === lib.id && i.enriched).length;
               const needsPermission = lib.permission !== 'granted';
+              const showEnrichButton = lib.type === 'MOVIE' || lib.type === 'TV' || lib.type === 'AUDIOBOOK';
               return (
                 <div
                   key={lib.id}
@@ -359,25 +381,52 @@ function LocalLibrariesCard() {
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
                       {itemCount} file{itemCount !== 1 ? 's' : ''} indexed
+                      {enrichedCount > 0 && ` • ${enrichedCount} enriched`}
                       {lib.lastScanAt > 0 && ` • Last scanned ${formatRelativeTime(new Date(lib.lastScanAt))}`}
                     </div>
+                    {isEnriching && enrichProgress && enrichProgress.total > 0 && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary transition-all"
+                            style={{ width: `${Math.round((enrichProgress.done / enrichProgress.total) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">
+                          {enrichProgress.done}/{enrichProgress.total}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => handleScan(lib.id, lib.name)}
-                      disabled={isScanning || !supported}
+                      disabled={isScanning || isEnriching || !supported}
                     >
                       {isScanning ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
                       {isScanning ? 'Scanning…' : 'Scan'}
                     </Button>
+                    {showEnrichButton && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleEnrich(lib.id, lib.name)}
+                        disabled={isScanning || isEnriching || itemCount === 0}
+                        title="Extract metadata (plot, cast, rating) and group sequels into collections using AI"
+                      >
+                        {isEnriching ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                        {isEnriching ? 'Enriching…' : 'Enrich'}
+                      </Button>
+                    )}
                     <Button
                       size="icon"
                       variant="ghost"
                       onClick={() => handleDelete(lib.id, lib.name)}
                       className="text-muted-foreground hover:text-destructive"
                       aria-label="Delete local library"
+                      disabled={isScanning || isEnriching}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
