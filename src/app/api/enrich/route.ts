@@ -22,7 +22,7 @@ import ZAI from 'z-ai-web-dev-sdk';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 120; // LLM calls can take a while for large batches
+export const maxDuration = 60; // keep under gateway/ALB timeout
 
 interface EnrichRequestItem {
   id: string;
@@ -62,8 +62,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ items: [] });
   }
 
-  // Cap batch size to avoid token limits
-  const batch = items.slice(0, 40);
+  // Cap batch size server-side as a safety net
+  const batch = items.slice(0, 15);
 
   try {
     const zai = await ZAI.create();

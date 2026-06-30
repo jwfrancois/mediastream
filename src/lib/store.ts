@@ -228,7 +228,7 @@ interface LocalLibraryState {
   hydrate: () => Promise<void>;
   addLocalLibrary: (name: string, type: LocalLibraryType) => Promise<void>;
   scanLocalLibrary: (id: string) => Promise<{ added: number; skipped: number }>;
-  enrichLibrary: (id: string, onProgress?: (done: number, total: number) => void) => Promise<{ enriched: number }>;
+  enrichLibrary: (id: string, onProgress?: (done: number, total: number) => void) => Promise<{ enriched: number; failedBatches: number }>;
   removeLocalLibrary: (id: string) => Promise<void>;
   getLocalItem: (id: string) => LocalMediaItem | undefined;
   getLocalItemsByType: (mediaType: LocalMediaItem['mediaType']) => LocalMediaItem[];
@@ -320,15 +320,20 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
       // Map library type to the API's type parameter
       const apiType = lib.type; // MOVIE | TV | AUDIOBOOK | MUSIC | PODCAST
 
-      // Process in batches of 30 to respect token limits
-      const BATCH_SIZE = 30;
+      // Process in small batches to keep each LLM call under the gateway
+      // timeout. Larger batches (30+) cause 502 Bad Gateway errors because
+      // the load balancer closes the connection before the LLM finishes
+      // generating the full JSON response.
+      const BATCH_SIZE = 8;
       let enrichedCount = 0;
       let done = 0;
+      let failedBatches = 0;
       const total = itemsToEnrich.length;
 
-      for (let i = 0; i < itemsToEnrich.length; i += BATCH_SIZE) {
-        const batch = itemsToEnrich.slice(i, i + BATCH_SIZE);
-        const requestItems = batch.map((item) => ({
+      // Helper: process a single batch, with automatic split-and-retry on failure
+      const processBatch = async (batchItems: LocalMediaItem[]): Promise<{ ok: boolean; enriched: number }> => {
+        if (batchItems.length === 0) return { ok: true, enriched: 0 };
+        const requestItems = batchItems.map((item) => ({
           id: item.id,
           title: item.title,
           year: item.year,
@@ -349,17 +354,12 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
           }
           const data = await res.json() as { items: Array<any> };
 
-          // Build a lookup of enriched data by id
-          const enrichedMap = new Map<string, any>(data.items.map((e: any) => [e.id, e]));
-
-          // Merge enrichment data into items and persist.
-          // For TV: apply the show-level metadata to ALL episodes of that show.
+          // Merge enrichment data into items and persist
           if (lib.type === 'TV') {
             for (const enrichedItem of data.items) {
-              const sourceItem = batch.find((b) => b.id === enrichedItem.id);
+              const sourceItem = batchItems.find((b) => b.id === enrichedItem.id);
               if (!sourceItem) continue;
               const showName = sourceItem.showTitle ?? sourceItem.title;
-              // Find all episodes of this show in the full items list
               const showEpisodes = get().items.filter(
                 (it) => it.libraryId === id && (it.showTitle ?? it.title) === showName,
               );
@@ -382,8 +382,8 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
               enrichedCount += showEpisodes.length;
             }
           } else {
-            // Movies / audiobooks / etc — update each item directly
-            for (const sourceItem of batch) {
+            const enrichedMap = new Map<string, any>(data.items.map((e: any) => [e.id, e]));
+            for (const sourceItem of batchItems) {
               const enrichedItem = enrichedMap.get(sourceItem.id);
               if (!enrichedItem) continue;
               const updated: LocalMediaItem = {
@@ -404,21 +404,36 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
             }
           }
 
-          done += batch.length;
-          onProgress?.(done, total);
-
-          // Refresh the in-memory items from IndexedDB periodically
+          // Refresh in-memory items
           const refreshedItems = await ll.loadLocalItems();
           set({ items: refreshedItems });
+          return { ok: true, enriched: data.items.length };
         } catch (e) {
-          console.error(`Enrichment batch failed (items ${i}-${i + batch.length}):`, e);
-          // Continue with next batch instead of failing entirely
-          done += batch.length;
-          onProgress?.(done, total);
+          // If the batch has more than 2 items, split it in half and retry
+          // each half — this handles 502/timeout errors on larger batches.
+          if (batchItems.length > 2) {
+            const mid = Math.floor(batchItems.length / 2);
+            const half1 = batchItems.slice(0, mid);
+            const half2 = batchItems.slice(mid);
+            const r1 = await processBatch(half1);
+            const r2 = await processBatch(half2);
+            return { ok: r1.ok && r2.ok, enriched: r1.enriched + r2.enriched };
+          }
+          // Batch too small to split — give up on this batch
+          console.error(`Enrichment batch failed (${batchItems.length} items):`, e);
+          return { ok: false, enriched: 0 };
         }
+      };
+
+      for (let i = 0; i < itemsToEnrich.length; i += BATCH_SIZE) {
+        const batch = itemsToEnrich.slice(i, i + BATCH_SIZE);
+        const result = await processBatch(batch);
+        if (!result.ok) failedBatches++;
+        done += batch.length;
+        onProgress?.(done, total);
       }
 
-      return { enriched: enrichedCount };
+      return { enriched: enrichedCount, failedBatches };
     } finally {
       set({ enriching: null });
     }

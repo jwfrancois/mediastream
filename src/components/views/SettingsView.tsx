@@ -296,9 +296,13 @@ function LocalLibrariesCard() {
   const handleEnrich = async (id: string, name: string) => {
     setEnrichProgress({ done: 0, total: 0 });
     try {
-      const { enriched } = await enrichLibrary(id, (done, total) => setEnrichProgress({ done, total }));
-      if (enriched === 0) {
+      const { enriched, failedBatches } = await enrichLibrary(id, (done, total) => setEnrichProgress({ done, total }));
+      if (enriched === 0 && failedBatches > 0) {
+        toast.error(`Enrichment failed for "${name}" — the AI service timed out. Try again (batches are now smaller) or enrich fewer items at a time.`);
+      } else if (enriched === 0) {
         toast.info(`"${name}": no new items to enrich (already up to date)`);
+      } else if (failedBatches > 0) {
+        toast.warning(`Enriched "${name}": ${enriched} item${enriched !== 1 ? 's' : ''} updated, but ${failedBatches} batch${failedBatches !== 1 ? 'es' : ''} failed (timeout). Click Enrich again to retry the remaining items.`);
       } else {
         toast.success(`Enriched "${name}": ${enriched} item${enriched !== 1 ? 's' : ''} updated with metadata${lib(id)?.type === 'MOVIE' ? ' and collection grouping' : ''}`);
       }
