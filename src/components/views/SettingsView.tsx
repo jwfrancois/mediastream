@@ -279,8 +279,14 @@ function LocalLibrariesCard() {
 
   const handleScan = async (id: string, name: string) => {
     try {
-      const { added } = await scanLocalLibrary(id);
-      toast.success(`Scanned "${name}": ${added} file${added !== 1 ? 's' : ''} indexed`);
+      const { added, skipped } = await scanLocalLibrary(id);
+      if (skipped > 0) {
+        toast.success(
+          `Scanned "${name}": ${added} file${added !== 1 ? 's' : ''} indexed (${skipped} skipped due to access errors — see console for details)`,
+        );
+      } else {
+        toast.success(`Scanned "${name}": ${added} file${added !== 1 ? 's' : ''} indexed`);
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Scan failed');
     }

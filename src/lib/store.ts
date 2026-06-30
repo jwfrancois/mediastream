@@ -226,7 +226,7 @@ interface LocalLibraryState {
 
   hydrate: () => Promise<void>;
   addLocalLibrary: (name: string, type: LocalLibraryType) => Promise<void>;
-  scanLocalLibrary: (id: string) => Promise<{ added: number }>;
+  scanLocalLibrary: (id: string) => Promise<{ added: number; skipped: number }>;
   removeLocalLibrary: (id: string) => Promise<void>;
   getLocalItem: (id: string) => LocalMediaItem | undefined;
   getLocalItemsByType: (mediaType: LocalMediaItem['mediaType']) => LocalMediaItem[];
@@ -280,7 +280,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         items,
         libraries: s.libraries.map((l) => (l.id === id ? updatedLib : l)),
       }));
-      return { added: result.added };
+      return { added: result.added, skipped: result.skipped };
     } finally {
       set({ scanning: null });
     }
