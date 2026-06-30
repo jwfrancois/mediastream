@@ -1,0 +1,223 @@
+// Prisma schema for MediaStream - a Plex/Jellyfin-style media server
+// Combines Netflix (movies/TV), Spotify (music/podcasts), and Audible (audiobooks)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Library configuration - each library points to a filesystem directory
+model Library {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   // MOVIE | TV | MUSIC | PODCAST | AUDIOBOOK
+  path        String   // filesystem path
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastScanAt  DateTime?
+
+  movies      Movie[]
+  tvShows     TvShow[]
+  albums      Album[]
+  podcasts    Podcast[]
+  audiobooks  Audiobook[]
+}
+
+// ---------------- Movies ----------------
+model Movie {
+  id           String   @id @default(cuid())
+  libraryId    String
+  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  title        String
+  sortTitle    String
+  year         Int?
+  plot         String?
+  genre        String?
+  director     String?
+  cast         String?  // JSON-encoded string array
+  duration     Int?     // seconds
+  rating       Float?   // 0-10
+  posterColor  String?  // gradient seed for demo poster
+  backdropColor String?
+  filePath     String
+  fileSize     Int?
+  addedAt      DateTime @default(now())
+
+  @@index([libraryId])
+  @@index([sortTitle])
+}
+
+// ---------------- TV Shows ----------------
+model TvShow {
+  id           String   @id @default(cuid())
+  libraryId    String
+  library      Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  title        String
+  sortTitle    String
+  year         Int?
+  plot         String?
+  genre        String?
+  rating       Float?
+  posterColor  String?
+  backdropColor String?
+  addedAt      DateTime @default(now())
+
+  seasons      Season[]
+
+  @@index([libraryId])
+  @@index([sortTitle])
+}
+
+model Season {
+  id           String   @id @default(cuid())
+  tvShowId     String
+  tvShow       TvShow   @relation(fields: [tvShowId], references: [id], onDelete: Cascade)
+  seasonNumber Int
+  title        String?
+  posterColor  String?
+  episodes     Episode[]
+
+  @@unique([tvShowId, seasonNumber])
+}
+
+model Episode {
+  id            String   @id @default(cuid())
+  seasonId      String
+  season        Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  episodeNumber Int
+  title         String
+  plot          String?
+  duration      Int?
+  filePath      String
+  fileSize      Int?
+  addedAt       DateTime @default(now())
+
+  @@index([seasonId])
+}
+
+// ---------------- Music ----------------
+model Artist {
+  id        String   @id @default(cuid())
+  name      String
+  sortName  String
+  bio       String?
+  imageColor String?
+  albums    Album[]
+  tracks    Track[]   // tracks where this artist is the performer (may differ from album artist)
+
+  @@index([sortName])
+}
+
+model Album {
+  id         String   @id @default(cuid())
+  libraryId  String
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  artistId   String?
+  artist     Artist?  @relation(fields: [artistId], references: [id], onDelete: SetNull)
+  title      String
+  sortTitle  String
+  year       Int?
+  genre      String?
+  coverColor String?
+  addedAt    DateTime @default(now())
+
+  tracks     Track[]
+
+  @@index([libraryId])
+  @@index([artistId])
+  @@index([sortTitle])
+}
+
+model Track {
+  id          String   @id @default(cuid())
+  albumId     String
+  album       Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  artistId    String?
+  artist      Artist?  @relation(fields: [artistId], references: [id], onDelete: SetNull)
+  trackNumber Int
+  title       String
+  duration    Int?
+  filePath    String
+  fileSize    Int?
+  addedAt     DateTime @default(now())
+
+  @@index([albumId])
+}
+
+// ---------------- Podcasts ----------------
+model Podcast {
+  id          String   @id @default(cuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  title       String
+  sortTitle   String
+  author      String?
+  description String?
+  genre       String?
+  coverColor  String?
+  addedAt     DateTime @default(now())
+
+  episodes    PodcastEpisode[]
+
+  @@index([libraryId])
+  @@index([sortTitle])
+}
+
+model PodcastEpisode {
+  id          String   @id @default(cuid())
+  podcastId   String
+  podcast     Podcast  @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  episodeNumber Int
+  title       String
+  description String?
+  pubDate     DateTime?
+  duration    Int?
+  filePath    String
+  fileSize    Int?
+  addedAt     DateTime @default(now())
+
+  @@index([podcastId])
+}
+
+// ---------------- Audiobooks ----------------
+model Audiobook {
+  id          String   @id @default(cuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  title       String
+  sortTitle   String
+  author      String?
+  narrator    String?
+  description String?
+  genre       String?
+  year        Int?
+  coverColor  String?
+  duration    Int?
+  filePath    String
+  fileSize    Int?
+  addedAt     DateTime @default(now())
+
+  @@index([libraryId])
+  @@index([sortTitle])
+}
+
+// ---------------- Playback progress (continue watching/listening) ----------------
+// Polymorphic by design: mediaType indicates which media model the mediaId refers to.
+// We do NOT use Prisma relations here because mediaId can reference 5 different tables.
+model WatchProgress {
+  id         String   @id @default(cuid())
+  mediaType  String   // MOVIE | EPISODE | TRACK | PODCAST_EPISODE | AUDIOBOOK
+  mediaId    String
+  position   Int      // seconds
+  duration   Int?     // total seconds
+  completed  Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([mediaType, mediaId])
+  @@index([mediaType])
+  @@index([updatedAt])
+}
