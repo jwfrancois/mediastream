@@ -33,6 +33,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className="dark">
       <body
         className={`${inter.variable} antialiased bg-background text-foreground`}
+        suppressHydrationWarning
       >
         {children}
         <Toaster />
