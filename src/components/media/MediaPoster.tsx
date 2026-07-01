@@ -1,6 +1,6 @@
 // Gradient-based media poster — used because we don't ship real poster images.
-// The poster is generated deterministically from the title so each media item
-// gets a unique, attractive gradient. The title overlay makes it scannable.
+// Each media item gets a unique, cinematic gradient derived from its color seed.
+// Includes: directional lighting, film grain, vignette, and a shimmer sweep on hover.
 
 'use client';
 
@@ -30,45 +30,58 @@ export function MediaPoster({
     aspect === 'landscape' ? 'aspect-[16/9]' :
     'aspect-square';
 
-  // Use the provided HSL color, or fall back to a gradient from the title
   const bg = color || 'hsl(220, 30%, 30%)';
 
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-md flex flex-col justify-end',
+        'group/poster relative overflow-hidden flex flex-col justify-end grain',
         aspectClass,
         className,
       )}
       style={{
-        background: `linear-gradient(135deg, ${bg} 0%, hsl(0, 0%, 8%) 100%)`,
+        background: `linear-gradient(145deg, ${bg} 0%, hsl(0, 0%, 6%) 100%)`,
       }}
     >
-      {/* Decorative geometric overlay for visual interest */}
+      {/* Directional lighting — simulates a key light from upper-left */}
       <div
-        className="absolute inset-0 opacity-30 mix-blend-overlay"
+        className="absolute inset-0 opacity-50 mix-blend-soft-light"
         style={{
-          backgroundImage: `
-            radial-gradient(circle at 20% 30%, rgba(255,255,255,0.15) 0%, transparent 40%),
-            radial-gradient(circle at 80% 70%, rgba(0,0,0,0.3) 0%, transparent 50%)
+          background: `
+            radial-gradient(ellipse 60% 80% at 25% 15%, rgba(255,255,255,0.25) 0%, transparent 55%),
+            radial-gradient(ellipse 50% 60% at 80% 85%, rgba(0,0,0,0.5) 0%, transparent 60%)
           `,
         }}
       />
-      {/* Subtle grain / scanline texture */}
+      {/* Color wash — a subtle second hue blended in for richness */}
       <div
-        className="absolute inset-0 opacity-[0.08]"
+        className="absolute inset-0 opacity-25 mix-blend-color-dodge"
         style={{
-          backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.5) 2px, rgba(255,255,255,0.5) 3px)`,
+          background: `radial-gradient(circle at 70% 30%, ${bg} 0%, transparent 70%)`,
+        }}
+      />
+      {/* Vignette */}
+      <div
+        className="absolute inset-0"
+        style={{
+          boxShadow: 'inset 0 0 60px 10px rgba(0,0,0,0.5)',
+        }}
+      />
+      {/* Shimmer sweep on hover */}
+      <div
+        className="absolute inset-0 opacity-0 group-hover/poster:opacity-100 transition-opacity duration-500 pointer-events-none"
+        style={{
+          background: 'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.12) 50%, transparent 60%)',
         }}
       />
 
       {showTitle && (
-        <div className="relative z-10 p-3 bg-gradient-to-t from-black/80 via-black/30 to-transparent">
-          <div className="font-semibold text-white text-sm leading-tight line-clamp-2 drop-shadow-md">
+        <div className="relative z-10 p-3 bg-gradient-to-t from-black/90 via-black/40 to-transparent">
+          <div className="font-semibold text-white text-sm leading-tight line-clamp-2 drop-shadow-lg">
             {title}
           </div>
           {subtitle && (
-            <div className="text-white/70 text-xs mt-0.5 line-clamp-1">
+            <div className="text-white/65 text-xs mt-0.5 line-clamp-1 drop-shadow">
               {subtitle}
             </div>
           )}
@@ -80,7 +93,7 @@ export function MediaPoster({
   );
 }
 
-// Larger hero-style backdrop
+// Larger hero-style backdrop — for detail pages and the dashboard hero
 export function MediaBackdrop({
   title,
   subtitle,
@@ -97,22 +110,40 @@ export function MediaBackdrop({
   const bg = color || 'hsl(220, 30%, 30%)';
   return (
     <div
-      className={cn('relative overflow-hidden', className)}
+      className={cn('relative overflow-hidden grain', className)}
       style={{
-        background: `linear-gradient(120deg, ${bg} 0%, hsl(0, 0%, 5%) 70%, hsl(0, 0%, 0%) 100%)`,
+        background: `
+          radial-gradient(ellipse 80% 60% at 30% 30%, ${bg} 0%, transparent 70%),
+          linear-gradient(120deg, hsl(0, 0%, 5%) 0%, hsl(0, 0%, 0%) 100%)
+        `,
       }}
     >
+      {/* Drifting aurora layer */}
       <div
-        className="absolute inset-0 opacity-40 mix-blend-overlay"
+        className="absolute inset-0 opacity-50 aurora-drift mix-blend-screen"
+        style={{
+          background: `
+            radial-gradient(circle at 40% 50%, ${bg} 0%, transparent 50%),
+            radial-gradient(circle at 70% 40%, hsl(${hueShift(bg)}, 40%, 25%) 0%, transparent 45%)
+          `,
+        }}
+      />
+      {/* Directional light */}
+      <div
+        className="absolute inset-0 opacity-40 mix-blend-soft-light"
         style={{
           backgroundImage: `
-            radial-gradient(circle at 30% 40%, rgba(255,255,255,0.2) 0%, transparent 50%),
-            radial-gradient(circle at 70% 60%, rgba(0,0,0,0.4) 0%, transparent 60%)
+            radial-gradient(ellipse 50% 70% at 20% 30%, rgba(255,255,255,0.2) 0%, transparent 55%),
+            radial-gradient(ellipse 60% 50% at 80% 80%, rgba(0,0,0,0.6) 0%, transparent 60%)
           `,
         }}
       />
       <div className="relative z-10 h-full flex flex-col justify-end p-8 md:p-12">
-        <h1 className="text-4xl md:text-6xl font-bold text-white drop-shadow-2xl">{title}</h1>
+        {title && (
+          <h1 className="text-4xl md:text-6xl font-bold text-white drop-shadow-2xl tracking-tight">
+            {title}
+          </h1>
+        )}
         {subtitle && (
           <p className="mt-3 text-base md:text-lg text-white/80 max-w-2xl line-clamp-2 drop-shadow-lg">
             {subtitle}
@@ -122,4 +153,11 @@ export function MediaBackdrop({
       </div>
     </div>
   );
+}
+
+// Extract hue from an hsl string and shift it by 40 degrees
+function hueShift(hsl: string): number {
+  const m = hsl.match(/hsl\(\s*(\d+)/);
+  if (!m) return 250;
+  return (parseInt(m[1], 10) + 40) % 360;
 }

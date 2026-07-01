@@ -8,12 +8,14 @@ import { useNav, useVideoPlayer } from '@/lib/store';
 import { MediaBackdrop } from '@/components/media/MediaPoster';
 import { MediaRow } from '@/components/media/MediaRow';
 import { MediaCard } from '@/components/media/MediaCard';
+import { RatingRing } from '@/components/media/RatingRing';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Play, ArrowLeft, Star, Calendar, Tv, CheckCircle2, Clock } from 'lucide-react';
+import { Play, ArrowLeft, Star, Calendar, Tv, CheckCircle2, Clock, Info } from 'lucide-react';
 import { formatDurationShort, formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useAmbientColor } from '@/lib/useAmbient';
 
 interface TvDetailData {
   id: string;
@@ -48,6 +50,9 @@ export function TvDetailView({ id }: { id: string }) {
   const openVideo = useVideoPlayer((s) => s.openPlayer);
 
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
+
+  // Set ambient color to the show's palette
+  useAmbientColor({ color: data?.backdropColor ?? data?.posterColor });
 
   if (loading) return <ShowSkeleton />;
 
@@ -177,11 +182,15 @@ export function TvDetailView({ id }: { id: string }) {
                 const progressPct = ep.progress?.duration
                   ? Math.min(100, Math.round((ep.progress.position / ep.progress.duration) * 100))
                   : 0;
+                const isNextUp = ep.id === firstUnwatchedEp?.id;
                 return (
                   <div
                     key={ep.id}
                     className={cn(
-                      'group flex gap-4 p-3 rounded-lg bg-card/50 hover:bg-card border border-transparent hover:border-border transition cursor-pointer',
+                      'group flex gap-4 p-3 rounded-xl transition cursor-pointer card-lift',
+                      isNextUp
+                        ? 'bg-primary/10 border border-primary/40 ring-1 ring-primary/20'
+                        : 'bg-card/50 hover:bg-card border border-transparent hover:border-border',
                     )}
                     onClick={() => openVideo({
                       id: ep.id, type: 'episode',
@@ -221,6 +230,11 @@ export function TvDetailView({ id }: { id: string }) {
                         <span className="text-xs font-medium text-muted-foreground">
                           Episode {ep.episodeNumber}
                         </span>
+                        {isNextUp && (
+                          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary text-primary-foreground">
+                            Next Up
+                          </span>
+                        )}
                         {ep.duration && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <Clock className="w-3 h-3" /> {formatDurationShort(ep.duration)}
@@ -230,7 +244,7 @@ export function TvDetailView({ id }: { id: string }) {
                           <span className="text-xs text-primary">{progressPct}% watched</span>
                         )}
                       </div>
-                      <h3 className="font-semibold text-foreground line-clamp-1 mb-1">{ep.title}</h3>
+                      <h3 className={cn('font-semibold line-clamp-1 mb-1', isNextUp ? 'text-primary' : 'text-foreground')}>{ep.title}</h3>
                       {ep.plot && (
                         <p className="text-sm text-muted-foreground line-clamp-2">{ep.plot}</p>
                       )}

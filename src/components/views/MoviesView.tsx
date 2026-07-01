@@ -224,7 +224,7 @@ export function MoviesView() {
       )}
 
       {displayedItems.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 stagger">
           {displayedItems.map((m: LocalMovie) => (
             <MediaCard
               key={m.id}
@@ -234,6 +234,11 @@ export function MoviesView() {
               rating={m.rating}
               year={m.year}
               duration={m.duration}
+              genre={m.genre}
+              plot={m.plot}
+              cast={m.cast}
+              director={m.director}
+              badge={m.isLocal ? 'Local' : undefined}
               onClick={() => m.isLocal ? openVideo({
                 id: m.id, type: 'movie', title: m.title, isLocal: true,
                 subtitle: [m.year, m.genre].filter(Boolean).join(' • '),

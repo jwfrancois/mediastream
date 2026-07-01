@@ -8,10 +8,12 @@ import { useNav, useVideoPlayer, useAudioPlayer, useLocalLibraries, type AudioQu
 import { MediaRow } from '@/components/media/MediaRow';
 import { MediaCard, MediaCardLandscape, MediaCardSquare } from '@/components/media/MediaCard';
 import { MediaBackdrop } from '@/components/media/MediaPoster';
-import { Play, Info, ChevronRight, Film, Tv, Music, Mic, BookHeadphones, TrendingUp, HardDrive, Sparkles } from 'lucide-react';
+import { Play, Info, ChevronRight, Film, Tv, Music, Mic, BookHeadphones, TrendingUp, HardDrive, Sparkles, Star, Clock, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDurationShort, formatProgress, streamUrl } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAmbientColor } from '@/lib/useAmbient';
+import { RatingRing } from '@/components/media/RatingRing';
 
 interface DashboardData {
   hero: any;
@@ -270,51 +272,23 @@ export function DashboardView() {
 
   return (
     <div className="pb-8">
-      {/* Hero */}
+      {/* Hero — immersive with metadata strip */}
       {hero && (
-        <div className="relative h-[55vh] min-h-[400px] mb-8 fade-in">
-          <MediaBackdrop
-            title={hero.title}
-            subtitle={hero.plot}
-            color={hero.backdropColor}
-            className="absolute inset-0 h-full"
-          >
-            <div className="flex flex-wrap items-center gap-3 mt-6">
-              <Button
-                size="lg"
-                onClick={() => {
-                  if (hero.type === 'movie') {
-                    openVideo({
-                      id: hero.id,
-                      type: 'movie',
-                      title: hero.title,
-                      isLocal: !!(hero as any).isLocal,
-                      subtitle: [hero.year, hero.genre].filter(Boolean).join(' • '),
-                      duration: hero.duration,
-                      color: hero.backdropColor,
-                    });
-                  } else {
-                    navigate({ kind: 'show', id: hero.id });
-                  }
-                }}
-                className="bg-white text-black hover:bg-white/90"
-              >
-                <Play className="w-5 h-5 fill-current mr-2" />
-                Play
-              </Button>
-              <Button
-                size="lg"
-                variant="secondary"
-                onClick={() => navigate(hero.type === 'movie' ? { kind: 'movie', id: hero.id } : { kind: 'show', id: hero.id })}
-                className="bg-white/20 text-white hover:bg-white/30 backdrop-blur-sm border border-white/20"
-              >
-                <Info className="w-5 h-5 mr-2" />
-                More Info
-              </Button>
-            </div>
-          </MediaBackdrop>
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent pointer-events-none" />
-        </div>
+        <HeroSection hero={hero} onPlay={() => {
+          if (hero.type === 'movie') {
+            openVideo({
+              id: hero.id,
+              type: 'movie',
+              title: hero.title,
+              isLocal: !!(hero as any).isLocal,
+              subtitle: [hero.year, hero.genre].filter(Boolean).join(' • '),
+              duration: hero.duration,
+              color: hero.backdropColor,
+            });
+          } else {
+            navigate({ kind: 'show', id: hero.id });
+          }
+        }} onMoreInfo={() => navigate(hero.type === 'movie' ? { kind: 'movie', id: hero.id } : { kind: 'show', id: hero.id })} />
       )}
 
       <div className="px-4 md:px-8 space-y-10">
@@ -502,6 +476,108 @@ function DashboardSkeleton() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// === Immersive Hero Section ===
+// Full-bleed cinematic backdrop with: title, metadata strip (year • genre •
+// duration • rating), plot, cast preview, and Play / More Info buttons.
+// The ambient aurora shifts to match the hero's color palette.
+
+function HeroSection({ hero, onPlay, onMoreInfo }: {
+  hero: any;
+  onPlay: () => void;
+  onMoreInfo: () => void;
+}) {
+  useAmbientColor({ color: hero.backdropColor ?? hero.color ?? hero.posterColor });
+
+  const metaItems = [
+    hero.year && { icon: Calendar, label: String(hero.year) },
+    hero.genre && { icon: null, label: hero.genre },
+    hero.duration && { icon: Clock, label: formatDurationShort(hero.duration) },
+  ].filter(Boolean) as { icon: any | null; label: string }[];
+
+  return (
+    <div className="relative h-[60vh] min-h-[420px] mb-8 fade-in grain">
+      <MediaBackdrop
+        title=""
+        color={hero.backdropColor ?? hero.color ?? hero.posterColor}
+        className="absolute inset-0 h-full"
+      >
+        <div className="flex flex-col justify-end h-full max-w-4xl">
+          {/* Type badge */}
+          <div className="flex items-center gap-2 mb-3 fade-up">
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest bg-white/15 text-white backdrop-blur-sm border border-white/20">
+              {hero.type === 'movie' ? 'Featured Film' : 'Featured Series'}
+            </span>
+            {(hero as any).isLocal && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest bg-primary/80 text-primary-foreground backdrop-blur-sm">
+                Local
+              </span>
+            )}
+          </div>
+
+          {/* Title */}
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold text-white tracking-tight drop-shadow-2xl fade-up">
+            {hero.title}
+          </h1>
+
+          {/* Metadata strip */}
+          <div className="flex flex-wrap items-center gap-3 mt-4 fade-up-delayed">
+            {hero.rating != null && (
+              <div className="flex items-center gap-2 glass rounded-full px-2 py-1">
+                <RatingRing score={hero.rating} size={28} />
+                <span className="text-xs text-white/80 font-medium pr-1">User Score</span>
+              </div>
+            )}
+            {metaItems.map((m, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-sm text-white/80">
+                {m.icon && <m.icon className="w-3.5 h-3.5" />}
+                <span>{m.label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Plot */}
+          {hero.plot && (
+            <p className="mt-4 text-base text-white/75 max-w-2xl line-clamp-2 drop-shadow-lg fade-up-delayed leading-relaxed">
+              {hero.plot}
+            </p>
+          )}
+
+          {/* Cast preview */}
+          {hero.cast && hero.cast.length > 0 && (
+            <div className="mt-3 text-sm text-white/60 fade-up-delayed">
+              <span className="text-white/40">Starring </span>
+              {hero.cast.slice(0, 3).join(', ')}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex flex-wrap items-center gap-3 mt-6 fade-up-delayed">
+            <Button
+              size="lg"
+              onClick={onPlay}
+              className="bg-white text-black hover:bg-white/90 rounded-full px-8 h-12 text-base font-semibold shadow-2xl"
+            >
+              <Play className="w-5 h-5 fill-current mr-2" />
+              {hero.type === 'movie' ? 'Play' : 'Start Watching'}
+            </Button>
+            <Button
+              size="lg"
+              variant="secondary"
+              onClick={onMoreInfo}
+              className="glass-strong text-white hover:bg-white/25 rounded-full px-6 h-12 text-base font-medium border border-white/15"
+            >
+              <Info className="w-5 h-5 mr-2" />
+              More Info
+            </Button>
+          </div>
+        </div>
+      </MediaBackdrop>
+      {/* Bottom fade into page background */}
+      <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background to-transparent pointer-events-none" />
     </div>
   );
 }

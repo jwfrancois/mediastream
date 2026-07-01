@@ -37,46 +37,69 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-glow: var(--glow);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
 }
 
 :root {
-  --radius: 0.5rem;
-  /* Dark cinematic theme — always-on dark mode for media streaming */
-  --background: oklch(0.10 0.005 270);
-  --foreground: oklch(0.97 0 0);
-  --card: oklch(0.15 0.005 270);
-  --card-foreground: oklch(0.97 0 0);
-  --popover: oklch(0.15 0.005 270);
-  --popover-foreground: oklch(0.97 0 0);
-  --primary: oklch(0.62 0.22 25);      /* Netflix-style red */
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.20 0.005 270);
-  --secondary-foreground: oklch(0.97 0 0);
-  --muted: oklch(0.20 0.005 270);
-  --muted-foreground: oklch(0.65 0 0);
-  --accent: oklch(0.62 0.22 25);
-  --accent-foreground: oklch(0.98 0 0);
-  --destructive: oklch(0.62 0.24 25);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.62 0.22 25);
-  --chart-1: oklch(0.62 0.22 25);
-  --chart-2: oklch(0.70 0.18 145);
-  --chart-3: oklch(0.65 0.20 250);
-  --chart-4: oklch(0.75 0.20 75);
-  --chart-5: oklch(0.70 0.22 305);
-  --sidebar: oklch(0.08 0.005 270);
-  --sidebar-foreground: oklch(0.97 0 0);
-  --sidebar-primary: oklch(0.62 0.22 25);
-  --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.18 0.005 270);
-  --sidebar-accent-foreground: oklch(0.97 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.62 0.22 25);
+  --radius: 0.625rem;
+
+  /* === MediaStream Ambient Aurora Theme ===
+     Deep near-black base with a hint of violet. The signature is that the
+     background subtly adopts the palette of the currently-focused media
+     via the --ambient-color variable (set dynamically by JS on detail pages). */
+
+  --background: oklch(0.085 0.008 275);
+  --foreground: oklch(0.97 0.003 275);
+  --card: oklch(0.13 0.008 275);
+  --card-foreground: oklch(0.97 0.003 275);
+  --popover: oklch(0.15 0.01 275);
+  --popover-foreground: oklch(0.97 0.003 275);
+
+  /* Primary: a vivid rose-red — cinematic, warm, Netflix-adjacent but our own */
+  --primary: oklch(0.64 0.235 22);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.18 0.008 275);
+  --secondary-foreground: oklch(0.97 0.003 275);
+  --muted: oklch(0.17 0.006 275);
+  --muted-foreground: oklch(0.62 0.01 275);
+
+  /* Accent: a luminous gold for ratings / highlights — distinguishes us from Netflix's mono-red */
+  --accent: oklch(0.78 0.16 75);
+  --accent-foreground: oklch(0.15 0.008 275);
+
+  --destructive: oklch(0.62 0.24 22);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.64 0.235 22);
+
+  /* Glow color — used by ambient aurora + card hover halos */
+  --glow: oklch(0.64 0.235 22 / 0.35);
+
+  --chart-1: oklch(0.64 0.235 22);
+  --chart-2: oklch(0.72 0.17 160);
+  --chart-3: oklch(0.68 0.18 250);
+  --chart-4: oklch(0.78 0.16 75);
+  --chart-5: oklch(0.70 0.20 305);
+
+  --sidebar: oklch(0.06 0.006 275);
+  --sidebar-foreground: oklch(0.97 0.003 275);
+  --sidebar-primary: oklch(0.64 0.235 22);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.15 0.008 275);
+  --sidebar-accent-foreground: oklch(0.97 0.003 275);
+  --sidebar-border: oklch(1 0 0 / 6%);
+  --sidebar-ring: oklch(0.64 0.235 22);
+
+  /* The ambient color is overridden per-page by setting a CSS variable on
+     the body. Defaults to the primary red. */
+  --ambient-color: 22;
+  --ambient-chroma: 0.12;
 }
 
 @layer base {
@@ -90,11 +113,25 @@
     min-height: 100vh;
   }
   body {
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    /* Ambient aurora: two large blurred radial gradients that use the
+       current media's hue. These sit behind all content and shift subtly
+       when the user navigates between media. */
+    background-image:
+      radial-gradient(ellipse 80% 50% at 15% 0%,
+        oklch(0.30 var(--ambient-chroma) var(--ambient-color) / 0.45) 0%,
+        transparent 60%),
+      radial-gradient(ellipse 70% 40% at 85% 100%,
+        oklch(0.25 var(--ambient-chroma) calc(var(--ambient-color) + 40) / 0.30) 0%,
+        transparent 55%),
+      radial-gradient(circle at 50% 50%, transparent 0%, var(--background) 100%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    transition: background-image 1.2s ease-out;
   }
 }
 
-/* Custom scrollbar — thin and subtle */
+/* === Scrollbar === */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -103,49 +140,111 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
 }
 
-/* Hide scrollbar for horizontal rails */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* Smooth fades for video / audio player overlays */
-.fade-in {
-  animation: fadeIn 200ms ease-out;
-}
+/* === Animations === */
+.fade-in { animation: fadeIn 250ms cubic-bezier(0.16, 1, 0.3, 1); }
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-.fade-up {
-  animation: fadeUp 350ms ease-out;
-}
+.fade-up { animation: fadeUp 450ms cubic-bezier(0.16, 1, 0.3, 1); }
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Pulse for live indicator */
-.pulse-dot {
-  animation: pulseDot 1.5s ease-in-out infinite;
-}
+.fade-up-delayed { animation: fadeUp 450ms cubic-bezier(0.16, 1, 0.3, 1) 100ms both; }
+
+/* Stagger helpers for rails */
+.stagger > * { animation: fadeUp 500ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(7) { animation-delay: 240ms; }
+.stagger > *:nth-child(8) { animation-delay: 280ms; }
+
+/* Pulse for live/equalizer indicator */
+.pulse-dot { animation: pulseDot 1.5s ease-in-out infinite; }
 @keyframes pulseDot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%, 100% { opacity: 1; transform: scaleY(1); }
+  50% { opacity: 0.4; transform: scaleY(0.6); }
 }
 
-/* Range input styling for player sliders */
+/* Ambient shimmer for hero gradient edges */
+.aurora-drift {
+  animation: auroraDrift 20s ease-in-out infinite alternate;
+}
+@keyframes auroraDrift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(2%, -1%) scale(1.05); }
+  100% { transform: translate(-1%, 1%) scale(1); }
+}
+
+/* Card hover lift */
+.card-lift {
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-lift:hover {
+  transform: translateY(-6px) scale(1.04);
+  box-shadow:
+    0 20px 50px -10px rgba(0, 0, 0, 0.6),
+    0 0 30px -5px var(--glow);
+  z-index: 20;
+}
+
+/* Glassmorphism panel */
+.glass {
+  background: rgba(20, 20, 28, 0.55);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-strong {
+  background: rgba(15, 15, 22, 0.85);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+/* Text gradient for hero titles */
+.text-gradient {
+  background: linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.75) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Subtle grain overlay for cinematic depth */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image:
+    repeating-conic-gradient(rgba(255,255,255,0.5) 0%, transparent 0.05%, transparent 0.5%);
+  mix-blend-mode: overlay;
+}
+
+/* === Range input styling for player sliders === */
 .player-range {
   -webkit-appearance: none;
   appearance: none;
@@ -154,7 +253,7 @@
 }
 .player-range::-webkit-slider-runnable-track {
   height: 4px;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.20);
   border-radius: 999px;
 }
 .player-range::-webkit-slider-thumb {
@@ -165,11 +264,11 @@
   background: #fff;
   border-radius: 999px;
   margin-top: -5px;
-  box-shadow: 0 0 6px rgba(0,0,0,0.4);
+  box-shadow: 0 0 8px rgba(0,0,0,0.5), 0 0 12px var(--glow);
 }
 .player-range::-moz-range-track {
   height: 4px;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.20);
   border-radius: 999px;
 }
 .player-range::-moz-range-thumb {
@@ -178,4 +277,14 @@
   background: #fff;
   border: 0;
   border-radius: 999px;
+}
+
+/* Rating ring (circular progress) */
+.rating-ring {
+  transform: rotate(-90deg);
+}
+.rating-ring circle {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
 }
