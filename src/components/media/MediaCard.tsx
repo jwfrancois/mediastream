@@ -144,7 +144,7 @@ export function MediaCard({
 
 // Wider landscape card (used for "Continue Watching" rail)
 export function MediaCardLandscape({
-  title, subtitle, color, onClick, onPlay, progress, aspect = '16/9', className, badge, rating,
+  title, subtitle, color, imageUrl, onClick, onPlay, progress, aspect = '16/9', className, badge, rating,
 }: BaseCardProps & { aspect?: string }) {
   return (
     <div
@@ -221,7 +221,7 @@ export function MediaCardLandscape({
 
 // Square card (used for music albums / artists)
 export function MediaCardSquare({
-  title, subtitle, color, onClick, onPlay, className, badge,
+  title, subtitle, color, imageUrl, onClick, onPlay, className, badge,
 }: BaseCardProps) {
   return (
     <div
