@@ -573,8 +573,11 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         return { fetched: 0, failed: 0 };
       }
 
-      // Process in batches of 4 (image search is slow — 30-90s per item)
-      const BATCH_SIZE = 4;
+      // Process ONE item at a time — image search is slow (30-90s per call)
+      // and the server API also processes 1 at a time to stay under the
+      // 60s gateway timeout. Each item does parallel image searches but
+      // still takes 30-50s, so we send them one by one.
+      const BATCH_SIZE = 1;
       let fetchedCount = 0;
       let failedCount = 0;
       let done = 0;
@@ -680,8 +683,80 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
           const refreshedItems = await ll.loadLocalItems();
           set({ items: refreshedItems });
         } catch (e) {
-          console.error(`Art fetch batch failed:`, e);
-          failedCount += batch.length;
+          // Retry once — image search can be flaky
+          console.warn(`Art fetch failed, retrying:`, e);
+          try {
+            const retryRes = await fetch('/api/fetch-art', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: lib.type, items: requestItems }),
+            });
+            if (retryRes.ok) {
+              const retryData = await retryRes.json() as { items: Array<any> };
+              const retryMap = new Map<string, any>(retryData.items.map((e: any) => [e.id, e]));
+              for (const sourceItem of batch) {
+                const artItem = retryMap.get(sourceItem.id);
+                if (!artItem || (!artItem.posterUrl && !artItem.backdropUrl && !artItem.castPhotos)) continue;
+                // Apply retry results (same merge logic as above)
+                if (lib.type === 'TV') {
+                  const showName = sourceItem.showTitle ?? sourceItem.title;
+                  const showEpisodes = get().items.filter(
+                    (it) => it.libraryId === id && (it.showTitle ?? it.title) === showName,
+                  );
+                  for (const ep of showEpisodes) {
+                    await ll.updateLocalItem({
+                      ...ep,
+                      posterUrl: artItem.posterUrl ?? ep.posterUrl,
+                      backdropUrl: artItem.backdropUrl ?? ep.backdropUrl,
+                      castPhotos: artItem.castPhotos ?? ep.castPhotos,
+                      filmography: artItem.filmography ?? ep.filmography,
+                    });
+                  }
+                  fetchedCount += showEpisodes.length;
+                } else if (lib.type === 'MUSIC') {
+                  const albumKey = (sourceItem.album ?? '') + '|' + (sourceItem.artist ?? '');
+                  const albumTracks = get().items.filter(
+                    (it) => it.libraryId === id && (it.album ?? '') + '|' + (it.artist ?? '') === albumKey && it.mediaType === 'track',
+                  );
+                  for (const track of albumTracks) {
+                    await ll.updateLocalItem({
+                      ...track,
+                      posterUrl: artItem.posterUrl ?? track.posterUrl,
+                      artistPhotoUrl: artItem.artistPhotoUrl ?? track.artistPhotoUrl,
+                      filmography: artItem.filmography ?? track.filmography,
+                    });
+                  }
+                  fetchedCount += albumTracks.length;
+                } else if (lib.type === 'PODCAST') {
+                  const podName = sourceItem.podcastTitle ?? sourceItem.title;
+                  const podEpisodes = get().items.filter(
+                    (it) => it.libraryId === id && (it.podcastTitle ?? it.title) === podName && it.mediaType === 'podcast-episode',
+                  );
+                  for (const ep of podEpisodes) {
+                    await ll.updateLocalItem({ ...ep, posterUrl: artItem.posterUrl ?? ep.posterUrl });
+                  }
+                  fetchedCount += podEpisodes.length;
+                } else {
+                  await ll.updateLocalItem({
+                    ...sourceItem,
+                    posterUrl: artItem.posterUrl ?? sourceItem.posterUrl,
+                    backdropUrl: artItem.backdropUrl ?? sourceItem.backdropUrl,
+                    castPhotos: artItem.castPhotos ?? sourceItem.castPhotos,
+                    artistPhotoUrl: artItem.artistPhotoUrl ?? sourceItem.artistPhotoUrl,
+                    filmography: artItem.filmography ?? sourceItem.filmography,
+                  });
+                  fetchedCount++;
+                }
+              }
+              const refreshed = await ll.loadLocalItems();
+              set({ items: refreshed });
+            } else {
+              throw e;
+            }
+          } catch (e2) {
+            console.error(`Art fetch retry also failed:`, e2);
+            failedCount += batch.length;
+          }
         }
 
         done += batch.length;

@@ -60,8 +60,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ items: [] });
   }
 
-  // Process in small batches to avoid timeouts
-  const batch = items.slice(0, 5);
+  // Process ONE item at a time — image search is slow (30-90s per call)
+  // and the ALB gateway has a 60s timeout. Even a single item with parallel
+  // searches can take 30-50s, so we never do more than 1 per request.
+  const batch = items.slice(0, 1);
   const results: FetchArtResponseItem[] = [];
 
   for (const item of batch) {
@@ -89,41 +91,44 @@ async function fetchArtForItem(item: FetchArtRequestItem, type: string): Promise
 
   try {
     if (isMovie || isTV) {
-      // Fetch poster
       const yearStr = item.year ? ` ${item.year}` : '';
-      const posterQuery = `${isTV ? 'TV show' : 'movie'} poster for ${item.title}${yearStr}`;
-      result.posterUrl = await fetchImage(posterQuery, 3);
+      const mediaKind = isTV ? 'TV show' : 'movie';
 
-      // Fetch backdrop
-      const backdropQuery = `${isTV ? 'TV show' : 'movie'} still scene from ${item.title}${yearStr}`;
-      result.backdropUrl = await fetchImage(backdropQuery, 2);
+      // Run poster + backdrop searches IN PARALLEL to halve the time
+      const [posterUrl, backdropUrl] = await Promise.all([
+        fetchImage(`${mediaKind} poster for ${item.title}${yearStr}`, 3),
+        fetchImage(`${mediaKind} still scene from ${item.title}${yearStr}`, 2),
+      ]);
+      result.posterUrl = posterUrl;
+      result.backdropUrl = backdropUrl;
 
-      // Fetch cast photos (up to 5)
+      // Cast photos — fetch up to 3 IN PARALLEL (not 5 — keeps under timeout)
       if (item.cast && item.cast.length > 0) {
-        const castPhotos: string[] = [];
-        for (const actor of item.cast.slice(0, 5)) {
-          const photoUrl = await fetchImage(`${actor} actor portrait photo`, 2);
-          if (photoUrl) castPhotos.push(photoUrl);
-        }
+        const castSlice = item.cast.slice(0, 3);
+        const photoResults = await Promise.all(
+          castSlice.map(actor => fetchImage(`${actor} actor portrait photo`, 2))
+        );
+        const castPhotos = photoResults.filter((url): url is string => url !== null);
         if (castPhotos.length > 0) result.castPhotos = castPhotos;
       }
 
-      // Fetch filmography for the director
+      // Filmography — fast LLM call, do it last
       if (item.director) {
         result.filmography = await fetchFilmography(item.director, 'Director');
       }
     } else if (isMusic) {
-      // Fetch album cover
       const albumTitle = item.album || item.title;
       const artist = item.artist || '';
-      const albumQuery = `album cover for ${albumTitle} by ${artist}`;
-      result.posterUrl = await fetchImage(albumQuery, 3);
 
-      // Fetch artist photo
+      // Album cover + artist photo IN PARALLEL
+      const [albumCover, artistPhoto] = await Promise.all([
+        fetchImage(`album cover for ${albumTitle} by ${artist}`, 3),
+        artist ? fetchImage(`${artist} musician portrait photo`, 2) : Promise.resolve(null),
+      ]);
+      result.posterUrl = albumCover;
+      result.artistPhotoUrl = artistPhoto ?? undefined;
+
       if (artist) {
-        const artistQuery = `${artist} musician portrait photo`;
-        result.artistPhotoUrl = await fetchImage(artistQuery, 2);
-        // Fetch discography
         result.filmography = await fetchFilmography(artist, 'Artist');
       }
     } else if (isPodcast) {
@@ -131,11 +136,16 @@ async function fetchArtForItem(item: FetchArtRequestItem, type: string): Promise
       result.posterUrl = await fetchImage(`podcast cover art for ${podTitle}`, 3);
     } else if (isAudiobook) {
       const author = item.author || '';
-      const bookQuery = `book cover for ${item.title} by ${author}`;
-      result.posterUrl = await fetchImage(bookQuery, 3);
+
+      // Book cover + author photo IN PARALLEL
+      const [bookCover, authorPhoto] = await Promise.all([
+        fetchImage(`book cover for ${item.title} by ${author}`, 3),
+        author ? fetchImage(`${author} author portrait photo`, 2) : Promise.resolve(null),
+      ]);
+      result.posterUrl = bookCover;
+      result.artistPhotoUrl = authorPhoto ?? undefined;
 
       if (author) {
-        result.artistPhotoUrl = await fetchImage(`${author} author portrait photo`, 2);
         result.filmography = await fetchFilmography(author, 'Author');
       }
     }
