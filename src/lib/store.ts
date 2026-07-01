@@ -4,6 +4,57 @@
 import { create } from 'zustand';
 import type { LocalLibrary, LocalMediaItem, LocalLibraryType } from './local-library';
 
+// ----------- Music Theme Preference -----------
+// Toggle between Spotify and Roon design languages for music + podcasts.
+// Spotify: green accent, vibrant gradients, big cards, "Made for You" feel
+// Roon: gold accent, ambient aurora, dense metadata, immersive player
+
+export type MusicTheme = 'spotify' | 'roon';
+
+interface MusicThemeState {
+  theme: MusicTheme;
+  setTheme: (t: MusicTheme) => void;
+  toggleTheme: () => void;
+}
+
+const THEME_STORAGE_KEY = 'mediastream-music-theme';
+
+function loadThemeFromStorage(): MusicTheme {
+  if (typeof localStorage === 'undefined') return 'roon';
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === 'spotify' ? 'spotify' : 'roon';
+  } catch {
+    return 'roon';
+  }
+}
+
+export const useMusicTheme = create<MusicThemeState>((set, get) => ({
+  theme: loadThemeFromStorage(),
+  setTheme: (t) => {
+    set({ theme: t });
+    try { localStorage.setItem(THEME_STORAGE_KEY, t); } catch { /* ignore */ }
+    // Update the body class for CSS variable switching
+    if (typeof document !== 'undefined') {
+      document.body.classList.toggle('theme-spotify', t === 'spotify');
+      document.body.classList.toggle('theme-roon', t === 'roon');
+    }
+  },
+  toggleTheme: () => {
+    const next = get().theme === 'spotify' ? 'roon' : 'spotify';
+    get().setTheme(next);
+  },
+}));
+
+// Initialize the body class on first import (client-side)
+if (typeof window !== 'undefined') {
+  const t = loadThemeFromStorage();
+  requestAnimationFrame(() => {
+    document.body.classList.toggle('theme-spotify', t === 'spotify');
+    document.body.classList.toggle('theme-roon', t === 'roon');
+  });
+}
+
 // ----------- Navigation -----------
 export type ViewType =
   | { kind: 'dashboard' }

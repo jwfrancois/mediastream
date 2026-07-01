@@ -131,6 +131,30 @@
   }
 }
 
+/* === Music Theme: Spotify mode ===
+   Overrides the accent color to Spotify green, uses vibrant gradients
+   from album art, and adjusts card density for a "Made for You" feel. */
+body.theme-spotify {
+  --primary: oklch(0.72 0.19 145);
+  --primary-foreground: oklch(0.10 0.008 275);
+  --accent: oklch(0.72 0.19 145);
+  --ring: oklch(0.72 0.19 145);
+  --glow: oklch(0.72 0.19 145 / 0.40);
+  --ambient-chroma: 0.16;
+}
+
+/* === Music Theme: Roon mode (default) ===
+   Gold accent for ratings/highlights, subtle ambient aurora background,
+   dense metadata layout with immersive full-screen player. */
+body.theme-roon {
+  --primary: oklch(0.64 0.235 22);
+  --primary-foreground: oklch(0.99 0 0);
+  --accent: oklch(0.78 0.16 75);
+  --ring: oklch(0.64 0.235 22);
+  --glow: oklch(0.64 0.235 22 / 0.35);
+  --ambient-chroma: 0.12;
+}
+
 /* === Scrollbar === */
 ::-webkit-scrollbar {
   width: 10px;

@@ -12,8 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Library, Plus, RefreshCw, Trash2, Film, Tv, Music, Mic, BookHeadphones, CheckCircle2, AlertCircle, Loader2, FolderOpen, HardDrive, Cloud, Sparkles, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRelativeTime } from '@/lib/format';
-import { useLocalLibraries } from '@/lib/store';
+import { useLocalLibraries, useMusicTheme } from '@/lib/store';
 import { isLocalLibrarySupported } from '@/lib/local-library';
+import { MusicThemeToggle } from '@/components/layout/MusicThemeToggle';
 
 interface LibraryData {
   id: string;
@@ -35,6 +36,7 @@ const LIBRARY_TYPE_META: Record<string, { label: string; icon: React.ComponentTy
 
 export function SettingsView() {
   const { data: libraries, loading, refetch } = useApi<LibraryData[]>('/api/libraries');
+  const { theme } = useMusicTheme();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState('MOVIE');
   const [newPath, setNewPath] = useState('');
@@ -95,6 +97,34 @@ export function SettingsView() {
       <p className="text-muted-foreground mb-8">
         Manage your media libraries. Add a folder pointing to your media, then scan it to populate your catalog.
       </p>
+
+      {/* Music experience theme toggle */}
+      <Card className="mb-8 border-primary/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Music className="w-5 h-5 text-primary" />
+            Music & Podcast Experience
+          </CardTitle>
+          <CardDescription>
+            Choose your preferred design language for music and podcasts. Switch anytime — your libraries and playback are not affected.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">
+                {theme === 'spotify' ? 'Spotify Mode' : 'Roon Mode'}
+              </div>
+              <p className="text-xs text-muted-foreground max-w-md">
+                {theme === 'spotify'
+                  ? 'Green accent, vibrant album-art gradients, big cards, and a "Made for You" discovery feel.'
+                  : 'Gold accent, ambient aurora background, dense metadata, and an immersive audiophile player with full credits and bios.'}
+              </p>
+            </div>
+            <MusicThemeToggle />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Libraries list */}
       <Card className="mb-8">

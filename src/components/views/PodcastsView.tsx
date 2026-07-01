@@ -1,10 +1,10 @@
-// Podcasts browser — grid of podcast shows.
+// Podcasts browser — adapts layout based on the music theme preference.
 
 'use client';
 
 import { useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useNav, useAudioPlayer, useLocalLibraries } from '@/lib/store';
+import { useNav, useAudioPlayer, useLocalLibraries, useMusicTheme } from '@/lib/store';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Mic } from 'lucide-react';
@@ -18,6 +18,8 @@ export function PodcastsView() {
   const navigate = useNav((s) => s.navigate);
   const playAudio = useAudioPlayer((s) => s.playNow);
   const localItems = useLocalLibraries((s) => s.items);
+  const { theme } = useMusicTheme();
+  const isSpotify = theme === 'spotify';
 
   // Group local podcast episodes by podcastTitle
   const localPodcasts = useMemo(() => {
@@ -68,17 +70,39 @@ export function PodcastsView() {
   };
 
   return (
-    <div className="px-4 md:px-8 py-6 pb-12">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold flex items-center gap-3">
-          <Mic className="w-7 h-7 text-primary" />
-          Podcasts
-        </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          {data ? `${data.items.length + localPodcasts.length} podcast${(data.items.length + localPodcasts.length) !== 1 ? 's' : ''}${localPodcasts.length > 0 ? ` (${localPodcasts.length} local)` : ''}` : 'Loading your podcast library…'}
-        </p>
-      </div>
+    <div className="pb-12">
+      {/* === Theme-aware header === */}
+      {isSpotify ? (
+        <div
+          className="relative px-4 md:px-8 pt-10 pb-6 mb-6 overflow-hidden"
+          style={{
+            background: `linear-gradient(135deg, hsl(145, 60%, 20%) 0%, hsl(145, 50%, 8%) 50%, var(--background) 100%)`,
+          }}
+        >
+          <div className="absolute inset-0 opacity-30 mix-blend-overlay" style={{
+            background: 'radial-gradient(ellipse 60% 80% at 25% 15%, rgba(255,255,255,0.25) 0%, transparent 55%)',
+          }} />
+          <div className="relative">
+            <div className="text-xs uppercase tracking-widest text-[#1DB954] font-bold mb-1">Episodes for You</div>
+            <h1 className="text-4xl md:text-6xl font-bold text-white tracking-tight mb-2">Podcasts</h1>
+            <p className="text-white/70 text-sm">
+              {data ? `${data.items.length + localPodcasts.length} shows` : 'Loading…'}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="px-4 md:px-8 py-6 mb-2">
+          <h1 className="text-3xl font-bold flex items-center gap-3">
+            <Mic className="w-7 h-7 text-primary" />
+            Podcasts
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            {data ? `${data.items.length + localPodcasts.length} podcast${(data.items.length + localPodcasts.length) !== 1 ? 's' : ''}${localPodcasts.length > 0 ? ` (${localPodcasts.length} local)` : ''}` : 'Loading your podcast library…'}
+          </p>
+        </div>
+      )}
 
+      <div className={isSpotify ? 'px-4 md:px-8' : 'px-4 md:px-8'}>
       {loading && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="aspect-square rounded-md" />)}
@@ -128,6 +152,7 @@ export function PodcastsView() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }
