@@ -4,7 +4,7 @@
 
 import { useState, useMemo } from 'react';
 import { useApi } from '@/lib/useApi';
-import { useNav, useVideoPlayer, useLocalLibraries } from '@/lib/store';
+import { useNav, useLocalLibraries } from '@/lib/store';
 import { MediaCard } from '@/components/media/MediaCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,6 @@ export function TvView() {
   const [genre, setGenre] = useState<string>('all');
   const [sort, setSort] = useState<string>('recent');
   const navigate = useNav((s) => s.navigate);
-  const openVideo = useVideoPlayer((s) => s.openPlayer);
   const localItems = useLocalLibraries((s) => s.items);
 
   const url = `/api/tv?sort=${sort}${genre !== 'all' ? `&genre=${encodeURIComponent(genre)}` : ''}`;
@@ -62,32 +61,6 @@ export function TvView() {
     ...(data?.genres ?? []),
     ...localShows.map((s) => s.genre).filter(Boolean) as string[],
   ])).sort();
-
-  const handlePlayLocalShow = (show: any) => {
-    const eps = show._localEpisodes;
-    if (!eps || eps.length === 0) return;
-    // Sort by season then episode
-    eps.sort((a: any, b: any) => (a.seasonNumber ?? 0) - (b.seasonNumber ?? 0) || (a.episodeNumber ?? 0) - (b.episodeNumber ?? 0));
-    const first = eps[0];
-    openVideo({
-      id: first.id,
-      type: 'episode',
-      title: first.title,
-      subtitle: `${show.title} • S${first.seasonNumber}E${first.episodeNumber}`,
-      duration: first.duration,
-      color: show.backdropColor,
-      isLocal: true,
-      queue: eps.map((ep: any) => ({
-        id: ep.id,
-        type: 'episode' as const,
-        title: ep.title,
-        subtitle: `${show.title} • S${ep.seasonNumber}E${ep.episodeNumber}`,
-        duration: ep.duration,
-        color: show.backdropColor,
-        isLocal: true,
-      })),
-    });
-  };
 
   return (
     <div className="px-4 md:px-8 py-6 pb-12">
@@ -162,8 +135,7 @@ export function TvView() {
               genre={s.genre}
               plot={s.plot}
               badge={s.isLocal ? 'Local' : undefined}
-              onClick={() => s.isLocal ? handlePlayLocalShow(s) : navigate({ kind: 'show', id: s.id })}
-              onPlay={s.isLocal ? () => handlePlayLocalShow(s) : undefined}
+              onClick={() => navigate({ kind: 'show', id: s.id })}
             />
           ))}
         </div>
