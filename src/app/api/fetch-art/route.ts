@@ -167,7 +167,13 @@ async function fetchImage(query: string, count: number = 3): Promise<string | nu
       '--no-rank',
     ], { timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
 
-    const data = JSON.parse(stdout);
+    // The z-ai CLI prints status lines (emojis) to stdout before the JSON.
+    // Extract only the JSON block (first { to last }).
+    const jsonStart = stdout.indexOf('{');
+    const jsonEnd = stdout.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd === -1) return null;
+    const jsonStr = stdout.slice(jsonStart, jsonEnd + 1);
+    const data = JSON.parse(jsonStr);
     if (!data.success || !data.results || data.results.length === 0) {
       return null;
     }

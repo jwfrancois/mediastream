@@ -43,6 +43,9 @@ model Movie {
   rating       Float?   // 0-10
   posterColor  String?  // gradient seed for demo poster
   backdropColor String?
+  posterUrl    String?  // real poster image URL (from image search)
+  backdropUrl  String?  // wide backdrop image URL
+  castPhotos   String?  // JSON-encoded array of cast photo URLs
   filePath     String
   fileSize     Int?
   addedAt      DateTime @default(now())
@@ -64,6 +67,9 @@ model TvShow {
   rating       Float?
   posterColor  String?
   backdropColor String?
+  posterUrl    String?
+  backdropUrl  String?
+  castPhotos   String?
   addedAt      DateTime @default(now())
 
   seasons      Season[]
@@ -106,6 +112,7 @@ model Artist {
   sortName  String
   bio       String?
   imageColor String?
+  photoUrl  String?
   albums    Album[]
   tracks    Track[]   // tracks where this artist is the performer (may differ from album artist)
 
@@ -123,6 +130,7 @@ model Album {
   year       Int?
   genre      String?
   coverColor String?
+  coverUrl   String?
   addedAt    DateTime @default(now())
 
   tracks     Track[]
@@ -159,6 +167,7 @@ model Podcast {
   description String?
   genre       String?
   coverColor  String?
+  coverUrl    String?
   addedAt     DateTime @default(now())
 
   episodes    PodcastEpisode[]
@@ -196,6 +205,7 @@ model Audiobook {
   genre       String?
   year        Int?
   coverColor  String?
+  coverUrl    String?
   duration    Int?
   filePath    String
   fileSize    Int?

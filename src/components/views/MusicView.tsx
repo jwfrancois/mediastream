@@ -172,6 +172,7 @@ export function MusicView() {
                     title={a.title}
                     subtitle={`${a.year ?? ''} • ${a.artist?.name ?? ''}`.replace(/^ • | • $/g, '')}
                     color={a.coverColor}
+                    imageUrl={a.coverUrl ?? a.posterUrl}
                     onClick={() => navigate({ kind: 'album', id: a.id })}
                     onPlay={() => a.isLocal ? handlePlayLocalAlbum(a) : navigate({ kind: 'album', id: a.id })}
                   />

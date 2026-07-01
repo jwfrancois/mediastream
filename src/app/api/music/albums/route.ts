@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
       year: a.year,
       genre: a.genre,
       coverColor: a.coverColor,
+      coverUrl: a.coverUrl,
       addedAt: a.addedAt,
       artist: a.artist,
       trackCount: a._count.tracks,

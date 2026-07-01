@@ -50,6 +50,8 @@ export async function GET(req: NextRequest) {
     plot: s.plot,
     posterColor: s.posterColor,
     backdropColor: s.backdropColor,
+    posterUrl: s.posterUrl,
+    backdropUrl: s.backdropUrl,
     addedAt: s.addedAt,
     seasonCount: s._count.seasons,
     episodeCount: s.seasons.reduce((sum, season) => sum + season._count.episodes, 0),

@@ -35,6 +35,8 @@ export async function GET(req: NextRequest) {
         duration: true,
         posterColor: true,
         backdropColor: true,
+        posterUrl: true,
+        backdropUrl: true,
         plot: true,
         addedAt: true,
       },

@@ -130,6 +130,7 @@ export function TvView() {
               title={s.title}
               subtitle={`${s.seasonCount} season${s.seasonCount !== 1 ? 's' : ''} • ${s.episodeCount} episodes${s.isLocal ? ' • Local' : ''}`}
               color={s.posterColor}
+              imageUrl={s.posterUrl}
               rating={s.rating}
               year={s.year}
               genre={s.genre}
