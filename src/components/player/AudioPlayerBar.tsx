@@ -1,5 +1,5 @@
-// Audio Player Bar — Spotify-style bottom bar for music, podcasts, and audiobooks.
-// Plays a queue of audio items, with full transport controls and progress tracking.
+// Audio Player Bar — Roon-inspired elegant bottom bar for music, podcasts, and audiobooks.
+// Plays a queue of audio items. Click the artwork to expand into the full-screen NowPlayingView.
 
 'use client';
 
@@ -9,11 +9,12 @@ import { streamUrl, formatDuration, isLocalId } from '@/lib/format';
 import { putJson } from '@/lib/useApi';
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, VolumeX,
-  ListMusic, X, ChevronUp, ChevronDown, Shuffle, Repeat,
+  ListMusic, X, ChevronUp, ChevronDown, Shuffle, Repeat, Heart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { NowPlayingView } from './NowPlayingView';
 
 const PROGRESS_INTERVAL_MS = 15_000;
 const STREAM_TYPE_MAP: Record<string, 'track' | 'podcast' | 'audiobook'> = {
@@ -457,6 +458,9 @@ export function AudioPlayerBar() {
           </div>
         </div>
       </div>
+
+      {/* Full-screen now playing overlay */}
+      <NowPlayingView />
     </>
   );
 }

@@ -363,7 +363,7 @@ function LocalLibrariesCard() {
               const isEnriching = enriching === lib.id;
               const enrichedCount = items.filter((i) => i.libraryId === lib.id && i.enriched).length;
               const needsPermission = lib.permission !== 'granted';
-              const showEnrichButton = lib.type === 'MOVIE' || lib.type === 'TV' || lib.type === 'AUDIOBOOK';
+              const showEnrichButton = true; // All library types support enrichment
               return (
                 <div
                   key={lib.id}

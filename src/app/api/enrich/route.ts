@@ -1,28 +1,20 @@
 // Metadata enrichment API
 // POST /api/enrich
 //
-// Takes a batch of local media items (titles + media type) and uses the
-// z-ai-web-dev-sdk LLM to:
-//   - Fill in missing metadata (plot, genre, year, director, cast, rating)
-//   - Group movies that are part of the same franchise/sequel series into
-//     collections (e.g. "Harry Potter Collection") with a viewing order
-//
-// This runs server-side because z-ai-web-dev-sdk is backend-only. The
-// browser sends the titles; the server calls the LLM and returns enriched
-// metadata. File contents never leave the browser.
-//
-// Request body:
-//   { type: "MOVIE" | "TV" | "AUDIOBOOK", items: [{ id, title, year? }] }
-// Response:
-//   { items: [{ id, title, plot?, genre?, year?, director?, cast?, rating?,
-//               collection?, collectionOrder? }] }
+// Takes a batch of local media items and uses the z-ai-web-dev-sdk LLM to
+// fill in rich metadata. Different media types get different prompts:
+//   - MOVIE: plot, genre, year, director, cast, rating, collection grouping
+//   - TV: show-level plot, genre, year, cast, rating
+//   - MUSIC: album description/genre/year + artist bio/genre
+//   - PODCAST: show description, host, genre
+//   - AUDIOBOOK: synopsis, author bio, genre, year, rating
 
 import { NextRequest, NextResponse } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 60; // keep under gateway/ALB timeout
+export const maxDuration = 60;
 
 interface EnrichRequestItem {
   id: string;
@@ -31,19 +23,11 @@ interface EnrichRequestItem {
   showTitle?: string;
   seasonNumber?: number;
   episodeNumber?: number;
-}
-
-interface EnrichResponseItem {
-  id: string;
-  title: string;
-  plot?: string;
-  genre?: string;
-  year?: number;
-  director?: string;
-  cast?: string[];
-  rating?: number;
-  collection?: string;
-  collectionOrder?: number;
+  album?: string;
+  artist?: string;
+  podcastTitle?: string;
+  author?: string;
+  narrator?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -62,13 +46,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ items: [] });
   }
 
-  // Cap batch size server-side as a safety net
   const batch = items.slice(0, 15);
 
   try {
     const zai = await ZAI.create();
-
-    // Build the prompt based on media type
     const systemPrompt = buildSystemPrompt(type);
     const userPrompt = buildUserPrompt(type, batch);
 
@@ -81,8 +62,6 @@ export async function POST(req: NextRequest) {
     });
 
     const rawResponse = completion.choices[0]?.message?.content ?? '';
-
-    // Parse the JSON response (the LLM may wrap it in markdown fences)
     const parsed = parseJsonResponse(rawResponse);
 
     if (!parsed || !Array.isArray(parsed.items)) {
@@ -92,8 +71,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate and normalize each item
-    const enriched: EnrichResponseItem[] = parsed.items.map((item: any) => ({
+    // Validate and normalize — pass through all fields the LLM returns
+    const enriched = parsed.items.map((item: any) => ({
       id: String(item.id ?? ''),
       title: String(item.title ?? ''),
       plot: item.plot ? String(item.plot) : undefined,
@@ -104,6 +83,19 @@ export async function POST(req: NextRequest) {
       rating: typeof item.rating === 'number' ? Math.max(0, Math.min(10, item.rating)) : undefined,
       collection: item.collection ? String(item.collection) : undefined,
       collectionOrder: typeof item.collectionOrder === 'number' ? item.collectionOrder : undefined,
+      // Music fields
+      albumDescription: item.albumDescription ? String(item.albumDescription) : undefined,
+      albumGenre: item.albumGenre ? String(item.albumGenre) : undefined,
+      albumYear: typeof item.albumYear === 'number' ? item.albumYear : undefined,
+      artistBio: item.artistBio ? String(item.artistBio) : undefined,
+      artistGenre: item.artistGenre ? String(item.artistGenre) : undefined,
+      // Podcast fields
+      podcastDescription: item.podcastDescription ? String(item.podcastDescription) : undefined,
+      podcastAuthor: item.podcastAuthor ? String(item.podcastAuthor) : undefined,
+      podcastGenre: item.podcastGenre ? String(item.podcastGenre) : undefined,
+      // Audiobook fields
+      authorBio: item.authorBio ? String(item.authorBio) : undefined,
+      bookSynopsis: item.bookSynopsis ? String(item.bookSynopsis) : undefined,
     }));
 
     return NextResponse.json({ items: enriched });
@@ -117,69 +109,85 @@ export async function POST(req: NextRequest) {
 }
 
 function buildSystemPrompt(type: string): string {
-  const base = `You are a media metadata expert. You are given a list of ${type === 'MOVIE' ? 'movies' : type === 'TV' ? 'TV show episodes' : type === 'AUDIOBOOK' ? 'audiobooks' : 'media items'} (parsed from filenames on a user's computer) and you must return accurate metadata for each one.
-
-Respond with ONLY valid JSON — no markdown fences, no commentary, no preamble. The response must be parseable by JSON.parse().
-
-The response format must be:
+  const jsonFormat = `Respond with ONLY valid JSON — no markdown fences, no commentary. Must be parseable by JSON.parse(). The format:
 {
-  "items": [
-    {
-      "id": "<the original id verbatim>",
-      "title": "<cleaned-up proper title>",
-      "plot": "<1-2 sentence plot summary>",
-      "genre": "<primary genre>",
-      "year": <number or null>,
-      "director": "<director name or null>",
-      "cast": ["<actor 1>", "<actor 2>", "<actor 3>"],
-      "rating": <0-10 number or null>,
-      "collection": "<franchise/collection name if part of a series, else null>",
-      "collectionOrder": <1-based viewing order within the collection, or null>
-    }
-  ]
+  "items": [ { ...fields... } ]
 }`;
 
-  const collectionGuidance = type === 'MOVIE'
-    ? `\n\nIMPORTANT for collections: If a movie is part of a franchise, sequel series, or saga (e.g. Harry Potter, Lord of the Rings, Star Wars, Marvel, James Bond, Toy Story, The Godfather, Jurassic Park, etc.), set "collection" to a consistent collection name like "Harry Potter Collection" or "The Lord of the Rings Trilogy". Set "collectionOrder" to the chronological viewing order within that collection (1 = first installment). Movies that are NOT part of any franchise should have "collection": null and "collectionOrder": null. Be generous with collection grouping — even loosely connected sequels (e.g. "Die Hard 2", "Die Hard: With a Vengeance") belong to the same collection.`
-    : '';
+  switch (type) {
+    case 'MOVIE':
+      return `You are a film metadata expert. Given movie titles parsed from filenames, return accurate metadata. ${jsonFormat}
+Each item: { "id", "title", "plot" (1-2 sentences), "genre", "year", "director", "cast" (array of 3-5 actors), "rating" (0-10), "collection" (franchise name or null), "collectionOrder" (1-based viewing order or null) }
+Group sequels/franchises into collections (e.g. "Harry Potter Collection", "Star Wars Saga"). Set collection to null for standalone films.`;
 
-  const titleGuidance = type === 'TV'
-    ? `\n\nFor TV episodes, "title" should be the episode's proper title. Use "showTitle" from the input to identify the show. Provide plot/genre/year/director/cast/rating at the SHOW level (same for all episodes of the same show).`
-    : '';
+    case 'TV':
+      return `You are a TV metadata expert. Given episode entries (with showTitle), return show-level metadata. ${jsonFormat}
+Each item: { "id", "title" (episode title), "plot" (episode summary), "genre", "year" (show's first year), "director", "cast" (array), "rating" (0-10) }
+Provide plot at the episode level, but genre/year/cast/rating at the show level (same for all episodes of the same show).`;
 
-  return base + collectionGuidance + titleGuidance + `\n\nIf you don't recognize a title, do your best to infer reasonable metadata from the title alone, and set "collection" to null. Never invent a collection for a standalone movie.`;
+    case 'MUSIC':
+      return `You are a music metadata expert. Given album and artist names parsed from folder structure, return rich metadata. ${jsonFormat}
+Each item: { "id", "title" (album or artist name), "albumDescription" (2-3 sentence review/description of the album's style and significance), "albumGenre", "albumYear", "artistBio" (3-4 sentence biography of the artist — their origin, style, career highlights), "artistGenre" }
+If the input has both album and artist, provide both albumDescription and artistBio. If only artist is available, focus on artistBio. Be evocative and informative — write like a music journalist.`;
+
+    case 'PODCAST':
+      return `You are a podcast metadata expert. Given podcast show names, return rich show metadata. ${jsonFormat}
+Each item: { "id", "title" (show name), "podcastDescription" (3-4 sentence description of the show's topic, format, and appeal), "podcastAuthor" (the host's name if known), "podcastGenre" }
+Be descriptive and engaging — help the listener understand what the show is about and why they should listen.`;
+
+    case 'AUDIOBOOK':
+      return `You are a book metadata expert. Given audiobook titles and authors, return rich metadata. ${jsonFormat}
+Each item: { "id", "title", "bookSynopsis" (3-4 sentence synopsis of the book's plot and themes), "genre", "year", "authorBio" (2-3 sentence biography of the author), "rating" (0-10, null if unknown) }
+Be evocative — write like a book review. Include the book's significance and appeal.`;
+
+    default:
+      return `You are a metadata expert. ${jsonFormat}`;
+  }
 }
 
 function buildUserPrompt(type: string, items: EnrichRequestItem[]): string {
+  const label =
+    type === 'MOVIE' ? 'movies' :
+    type === 'TV' ? 'TV episodes' :
+    type === 'MUSIC' ? 'albums/artists' :
+    type === 'PODCAST' ? 'podcasts' :
+    type === 'AUDIOBOOK' ? 'audiobooks' : 'items';
+
   const formatted = items.map((item, i) => {
-    const parts = [`id: "${item.id}"`, `title: "${item.title}"`];
-    if (item.year) parts.push(`year: ${item.year}`);
-    if (type === 'TV' && item.showTitle) {
-      parts.push(`showTitle: "${item.showTitle}"`);
-      parts.push(`season: ${item.seasonNumber ?? '?'}`);
-      parts.push(`episode: ${item.episodeNumber ?? '?'}`);
+    const parts = [`id: "${item.id}"`];
+    if (type === 'MUSIC') {
+      if (item.album) parts.push(`album: "${item.album}"`);
+      if (item.artist) parts.push(`artist: "${item.artist}"`);
+    } else if (type === 'PODCAST') {
+      parts.push(`podcast: "${item.podcastTitle ?? item.title}"`);
+    } else if (type === 'AUDIOBOOK') {
+      parts.push(`title: "${item.title}"`);
+      if (item.author) parts.push(`author: "${item.author}"`);
+      if (item.narrator) parts.push(`narrator: "${item.narrator}"`);
+    } else {
+      parts.push(`title: "${item.title}"`);
+      if (item.year) parts.push(`year: ${item.year}`);
+      if (type === 'TV' && item.showTitle) {
+        parts.push(`showTitle: "${item.showTitle}"`);
+        parts.push(`season: ${item.seasonNumber ?? '?'}`);
+        parts.push(`episode: ${item.episodeNumber ?? '?'}`);
+      }
     }
     return `  ${i + 1}. { ${parts.join(', ')} }`;
   }).join('\n');
 
-  return `Here are ${items.length} ${type === 'MOVIE' ? 'movies' : type === 'TV' ? 'TV episodes' : type === 'AUDIOBOOK' ? 'audiobooks' : 'items'} scraped from filenames. Return the JSON metadata for each one. Preserve the "id" field exactly as given.\n\n[\n${formatted}\n]`;
+  return `Here are ${items.length} ${label} from a user's library. Return JSON metadata for each. Preserve the "id" field exactly.\n\n[\n${formatted}\n]`;
 }
 
-// Extract JSON from a possibly-fenced LLM response
 function parseJsonResponse(raw: string): { items: any[] } | null {
   let text = raw.trim();
-  // Strip markdown code fences if present
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    text = fenceMatch[1].trim();
-  }
-  // Find the first { ... } block
+  if (fenceMatch) text = fenceMatch[1].trim();
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1) return null;
-  const jsonStr = text.slice(start, end + 1);
   try {
-    return JSON.parse(jsonStr);
+    return JSON.parse(text.slice(start, end + 1));
   } catch {
     return null;
   }

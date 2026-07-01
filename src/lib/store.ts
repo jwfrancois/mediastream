@@ -298,15 +298,38 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
 
       // Gather items for this library that haven't been enriched yet
       const allItems = get().items.filter((i) => i.libraryId === id);
-      // For TV, deduplicate by showTitle so we only enrich each show once
+
+      // Deduplicate based on library type:
+      // - TV: one request per show (showTitle)
+      // - MUSIC: one request per album|artist pair
+      // - PODCAST: one request per podcast show (podcastTitle)
+      // - MOVIE/AUDIOBOOK: one request per item
       let itemsToEnrich: LocalMediaItem[];
       if (lib.type === 'TV') {
-        const seenShows = new Set<string>();
+        const seen = new Set<string>();
         itemsToEnrich = allItems.filter((i) => {
           if (i.enriched) return false;
           const key = i.showTitle ?? i.title;
-          if (seenShows.has(key)) return false;
-          seenShows.add(key);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      } else if (lib.type === 'MUSIC') {
+        const seen = new Set<string>();
+        itemsToEnrich = allItems.filter((i) => {
+          if (i.enriched) return false;
+          const key = (i.album ?? '') + '|' + (i.artist ?? '');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      } else if (lib.type === 'PODCAST') {
+        const seen = new Set<string>();
+        itemsToEnrich = allItems.filter((i) => {
+          if (i.enriched) return false;
+          const key = i.podcastTitle ?? i.title;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         });
       } else {
@@ -340,6 +363,11 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
           showTitle: item.showTitle,
           seasonNumber: item.seasonNumber,
           episodeNumber: item.episodeNumber,
+          album: item.album,
+          artist: item.artist,
+          podcastTitle: item.podcastTitle,
+          author: item.author,
+          narrator: item.narrator,
         }));
 
         try {
@@ -354,7 +382,12 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
           }
           const data = await res.json() as { items: Array<any> };
 
-          // Merge enrichment data into items and persist
+          // Merge enrichment data into items and persist.
+          // The merge strategy depends on library type:
+          // - TV: apply show-level metadata to ALL episodes of the same show
+          // - MUSIC: apply album+artist metadata to ALL tracks of the same album|artist
+          // - PODCAST: apply show metadata to ALL episodes of the same podcast
+          // - MOVIE/AUDIOBOOK: update each item directly
           if (lib.type === 'TV') {
             for (const enrichedItem of data.items) {
               const sourceItem = batchItems.find((b) => b.id === enrichedItem.id);
@@ -373,15 +406,64 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
                   director: enrichedItem.director ?? ep.director,
                   cast: enrichedItem.cast ?? ep.cast,
                   rating: enrichedItem.rating ?? ep.rating,
-                  collection: enrichedItem.collection ?? ep.collection,
-                  collectionOrder: enrichedItem.collectionOrder ?? ep.collectionOrder,
                   backdropColor: ep.backdropColor ?? ll.colorFromString(showName + ' backdrop'),
                 };
                 await ll.updateLocalItem(updated);
               }
               enrichedCount += showEpisodes.length;
             }
+          } else if (lib.type === 'MUSIC') {
+            for (const enrichedItem of data.items) {
+              const sourceItem = batchItems.find((b) => b.id === enrichedItem.id);
+              if (!sourceItem) continue;
+              const albumKey = (sourceItem.album ?? '') + '|' + (sourceItem.artist ?? '');
+              // Apply to all tracks of this album|artist
+              const albumTracks = get().items.filter(
+                (it) => it.libraryId === id &&
+                  (it.album ?? '') + '|' + (it.artist ?? '') === albumKey &&
+                  it.mediaType === 'track',
+              );
+              for (const track of albumTracks) {
+                const updated: LocalMediaItem = {
+                  ...track,
+                  enriched: true,
+                  albumDescription: enrichedItem.albumDescription ?? track.albumDescription,
+                  albumGenre: enrichedItem.albumGenre ?? track.albumGenre,
+                  albumYear: enrichedItem.albumYear ?? track.albumYear,
+                  artistBio: enrichedItem.artistBio ?? track.artistBio,
+                  artistGenre: enrichedItem.artistGenre ?? track.artistGenre,
+                  genre: enrichedItem.albumGenre ?? enrichedItem.artistGenre ?? track.genre,
+                  year: enrichedItem.albumYear ?? track.year,
+                  backdropColor: track.backdropColor ?? ll.colorFromString((sourceItem.album ?? '') + ' backdrop'),
+                };
+                await ll.updateLocalItem(updated);
+              }
+              enrichedCount += albumTracks.length;
+            }
+          } else if (lib.type === 'PODCAST') {
+            for (const enrichedItem of data.items) {
+              const sourceItem = batchItems.find((b) => b.id === enrichedItem.id);
+              if (!sourceItem) continue;
+              const podName = sourceItem.podcastTitle ?? sourceItem.title;
+              const podEpisodes = get().items.filter(
+                (it) => it.libraryId === id && (it.podcastTitle ?? it.title) === podName && it.mediaType === 'podcast-episode',
+              );
+              for (const ep of podEpisodes) {
+                const updated: LocalMediaItem = {
+                  ...ep,
+                  enriched: true,
+                  podcastDescription: enrichedItem.podcastDescription ?? ep.podcastDescription,
+                  podcastAuthor: enrichedItem.podcastAuthor ?? ep.podcastAuthor,
+                  podcastGenre: enrichedItem.podcastGenre ?? ep.podcastGenre,
+                  genre: enrichedItem.podcastGenre ?? ep.genre,
+                  backdropColor: ep.backdropColor ?? ll.colorFromString(podName + ' backdrop'),
+                };
+                await ll.updateLocalItem(updated);
+              }
+              enrichedCount += podEpisodes.length;
+            }
           } else {
+            // MOVIE / AUDIOBOOK — update each item directly with all fields
             const enrichedMap = new Map<string, any>(data.items.map((e: any) => [e.id, e]));
             for (const sourceItem of batchItems) {
               const enrichedItem = enrichedMap.get(sourceItem.id);
@@ -389,7 +471,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
               const updated: LocalMediaItem = {
                 ...sourceItem,
                 enriched: true,
-                plot: enrichedItem.plot ?? sourceItem.plot,
+                plot: enrichedItem.plot ?? enrichedItem.bookSynopsis ?? sourceItem.plot,
                 genre: enrichedItem.genre ?? sourceItem.genre,
                 year: enrichedItem.year ?? sourceItem.year,
                 director: enrichedItem.director ?? sourceItem.director,
@@ -397,6 +479,8 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
                 rating: enrichedItem.rating ?? sourceItem.rating,
                 collection: enrichedItem.collection ?? sourceItem.collection,
                 collectionOrder: enrichedItem.collectionOrder ?? sourceItem.collectionOrder,
+                authorBio: enrichedItem.authorBio ?? sourceItem.authorBio,
+                bookSynopsis: enrichedItem.bookSynopsis ?? sourceItem.bookSynopsis,
                 backdropColor: sourceItem.backdropColor ?? ll.colorFromString(sourceItem.title + ' backdrop'),
               };
               await ll.updateLocalItem(updated);

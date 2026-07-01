@@ -105,7 +105,7 @@ export function PodcastsView() {
             <button
               key={p.id}
               type="button"
-              onClick={() => p.isLocal ? handlePlayLocal(p) : navigate({ kind: 'podcast', id: p.id })}
+              onClick={() => navigate({ kind: 'podcast', id: p.id })}
               className="group flex flex-col p-3 rounded-lg bg-card hover:bg-card/80 transition cursor-pointer text-left"
             >
               <div

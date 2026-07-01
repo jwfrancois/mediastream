@@ -143,7 +143,7 @@ export function MusicView() {
                     title={a.title}
                     subtitle={`${a.year ?? ''} • ${a.artist?.name ?? ''}`.replace(/^ • | • $/g, '')}
                     color={a.coverColor}
-                    onClick={() => a.isLocal ? handlePlayLocalAlbum(a) : navigate({ kind: 'album', id: a.id })}
+                    onClick={() => navigate({ kind: 'album', id: a.id })}
                     onPlay={() => a.isLocal ? handlePlayLocalAlbum(a) : navigate({ kind: 'album', id: a.id })}
                   />
                 </div>
@@ -165,7 +165,7 @@ export function MusicView() {
                 <button
                   key={a.id}
                   type="button"
-                  onClick={() => !a.isLocal && navigate({ kind: 'artist', id: a.id })}
+                  onClick={() => navigate({ kind: 'artist', id: a.id })}
                   className="group flex flex-col items-center p-4 rounded-lg bg-card hover:bg-card/80 transition cursor-pointer text-center relative"
                 >
                   {a.isLocal && (
