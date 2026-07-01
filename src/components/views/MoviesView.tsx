@@ -29,6 +29,7 @@ interface LocalMovie {
   duration?: number;
   posterColor: string;
   backdropColor: string;
+  posterUrl?: string;
   plot?: string;
   director?: string;
   cast?: string[];
@@ -61,6 +62,7 @@ export function MoviesView() {
       duration: i.duration,
       posterColor: i.color,
       backdropColor: i.backdropColor ?? i.color,
+      posterUrl: i.posterUrl,
       plot: i.plot,
       director: i.director,
       cast: i.cast,
@@ -231,6 +233,7 @@ export function MoviesView() {
               title={m.title}
               subtitle={`${m.year ?? ''} • ${m.genre ?? ''}${m.isLocal ? ' • Local' : ''}`.replace(/^ • | • $/g, '')}
               color={m.posterColor}
+              imageUrl={m.posterUrl}
               rating={m.rating}
               year={m.year}
               duration={m.duration}

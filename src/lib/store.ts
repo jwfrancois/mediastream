@@ -223,12 +223,14 @@ interface LocalLibraryState {
   loaded: boolean; // true after initial hydration from IndexedDB
   scanning: string | null; // library id currently being scanned, or null
   enriching: string | null; // library id currently being enriched, or null
+  fetchingArt: string | null; // library id currently fetching artwork, or null
   adding: boolean;
 
   hydrate: () => Promise<void>;
   addLocalLibrary: (name: string, type: LocalLibraryType) => Promise<void>;
   scanLocalLibrary: (id: string) => Promise<{ added: number; skipped: number }>;
   enrichLibrary: (id: string, onProgress?: (done: number, total: number) => void) => Promise<{ enriched: number; failedBatches: number }>;
+  fetchArt: (id: string, onProgress?: (done: number, total: number) => void) => Promise<{ fetched: number; failed: number }>;
   removeLocalLibrary: (id: string) => Promise<void>;
   getLocalItem: (id: string) => LocalMediaItem | undefined;
   getLocalItemsByType: (mediaType: LocalMediaItem['mediaType']) => LocalMediaItem[];
@@ -240,6 +242,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
   loaded: false,
   scanning: null,
   enriching: null,
+  fetchingArt: null,
   adding: false,
 
   hydrate: async () => {
@@ -520,6 +523,174 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
       return { enriched: enrichedCount, failedBatches };
     } finally {
       set({ enriching: null });
+    }
+  },
+
+  fetchArt: async (id, onProgress) => {
+    set({ fetchingArt: id });
+    try {
+      const ll = await import('./local-library');
+      const lib = get().libraries.find((l) => l.id === id);
+      if (!lib) throw new Error('Library not found');
+
+      // Gather items that don't have artwork yet
+      const allItems = get().items.filter((i) => i.libraryId === id);
+
+      // Deduplicate based on library type (same as enrichment)
+      let itemsToFetch: LocalMediaItem[];
+      if (lib.type === 'TV') {
+        const seen = new Set<string>();
+        itemsToFetch = allItems.filter((i) => {
+          if (i.posterUrl) return false;
+          const key = i.showTitle ?? i.title;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      } else if (lib.type === 'MUSIC') {
+        const seen = new Set<string>();
+        itemsToFetch = allItems.filter((i) => {
+          if (i.posterUrl) return false;
+          const key = (i.album ?? '') + '|' + (i.artist ?? '');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      } else if (lib.type === 'PODCAST') {
+        const seen = new Set<string>();
+        itemsToFetch = allItems.filter((i) => {
+          if (i.posterUrl) return false;
+          const key = i.podcastTitle ?? i.title;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      } else {
+        itemsToFetch = allItems.filter((i) => !i.posterUrl);
+      }
+
+      if (itemsToFetch.length === 0) {
+        return { fetched: 0, failed: 0 };
+      }
+
+      // Process in batches of 4 (image search is slow — 30-90s per item)
+      const BATCH_SIZE = 4;
+      let fetchedCount = 0;
+      let failedCount = 0;
+      let done = 0;
+      const total = itemsToFetch.length;
+
+      for (let i = 0; i < itemsToFetch.length; i += BATCH_SIZE) {
+        const batch = itemsToFetch.slice(i, i + BATCH_SIZE);
+        const requestItems = batch.map((item) => ({
+          id: item.id,
+          title: item.title,
+          year: item.year,
+          genre: item.genre,
+          director: item.director,
+          cast: item.cast,
+          artist: item.artist,
+          album: item.album,
+          author: item.author,
+          podcastTitle: item.podcastTitle,
+          mediaType: item.mediaType,
+        }));
+
+        try {
+          const res = await fetch('/api/fetch-art', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: lib.type, items: requestItems }),
+          });
+          if (!res.ok) {
+            const errBody = await res.text().catch(() => res.statusText);
+            throw new Error(`Fetch-art API ${res.status}: ${errBody}`);
+          }
+          const data = await res.json() as { items: Array<any> };
+          const artMap = new Map<string, any>(data.items.map((e: any) => [e.id, e]));
+
+          // Merge art URLs into items and persist
+          // For TV/MUSIC/PODCAST, apply to all related items
+          for (const sourceItem of batch) {
+            const artItem = artMap.get(sourceItem.id);
+            if (!artItem) { failedCount++; continue; }
+
+            if (lib.type === 'TV') {
+              const showName = sourceItem.showTitle ?? sourceItem.title;
+              const showEpisodes = get().items.filter(
+                (it) => it.libraryId === id && (it.showTitle ?? it.title) === showName,
+              );
+              for (const ep of showEpisodes) {
+                const updated: LocalMediaItem = {
+                  ...ep,
+                  posterUrl: artItem.posterUrl ?? ep.posterUrl,
+                  backdropUrl: artItem.backdropUrl ?? ep.backdropUrl,
+                  castPhotos: artItem.castPhotos ?? ep.castPhotos,
+                  filmography: artItem.filmography ?? ep.filmography,
+                };
+                await ll.updateLocalItem(updated);
+              }
+              fetchedCount += showEpisodes.length;
+            } else if (lib.type === 'MUSIC') {
+              const albumKey = (sourceItem.album ?? '') + '|' + (sourceItem.artist ?? '');
+              const albumTracks = get().items.filter(
+                (it) => it.libraryId === id &&
+                  (it.album ?? '') + '|' + (it.artist ?? '') === albumKey &&
+                  it.mediaType === 'track',
+              );
+              for (const track of albumTracks) {
+                const updated: LocalMediaItem = {
+                  ...track,
+                  posterUrl: artItem.posterUrl ?? track.posterUrl,
+                  artistPhotoUrl: artItem.artistPhotoUrl ?? track.artistPhotoUrl,
+                  filmography: artItem.filmography ?? track.filmography,
+                };
+                await ll.updateLocalItem(updated);
+              }
+              fetchedCount += albumTracks.length;
+            } else if (lib.type === 'PODCAST') {
+              const podName = sourceItem.podcastTitle ?? sourceItem.title;
+              const podEpisodes = get().items.filter(
+                (it) => it.libraryId === id && (it.podcastTitle ?? it.title) === podName && it.mediaType === 'podcast-episode',
+              );
+              for (const ep of podEpisodes) {
+                const updated: LocalMediaItem = {
+                  ...ep,
+                  posterUrl: artItem.posterUrl ?? ep.posterUrl,
+                };
+                await ll.updateLocalItem(updated);
+              }
+              fetchedCount += podEpisodes.length;
+            } else {
+              // Movie / Audiobook — update directly
+              const updated: LocalMediaItem = {
+                ...sourceItem,
+                posterUrl: artItem.posterUrl ?? sourceItem.posterUrl,
+                backdropUrl: artItem.backdropUrl ?? sourceItem.backdropUrl,
+                castPhotos: artItem.castPhotos ?? sourceItem.castPhotos,
+                artistPhotoUrl: artItem.artistPhotoUrl ?? sourceItem.artistPhotoUrl,
+                filmography: artItem.filmography ?? sourceItem.filmography,
+              };
+              await ll.updateLocalItem(updated);
+              fetchedCount++;
+            }
+          }
+
+          // Refresh in-memory items
+          const refreshedItems = await ll.loadLocalItems();
+          set({ items: refreshedItems });
+        } catch (e) {
+          console.error(`Art fetch batch failed:`, e);
+          failedCount += batch.length;
+        }
+
+        done += batch.length;
+        onProgress?.(done, total);
+      }
+
+      return { fetched: fetchedCount, failed: failedCount };
+    } finally {
+      set({ fetchingArt: null });
     }
   },
 

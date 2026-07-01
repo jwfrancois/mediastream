@@ -1,15 +1,17 @@
-// Gradient-based media poster — used because we don't ship real poster images.
-// Each media item gets a unique, cinematic gradient derived from its color seed.
+// Media poster — uses real images when available (from image search), falling
+// back to a cinematic gradient derived from the title's color seed.
 // Includes: directional lighting, film grain, vignette, and a shimmer sweep on hover.
 
 'use client';
 
 import { cn } from '@/lib/utils';
+import { useState } from 'react';
 
 interface MediaPosterProps {
   title: string;
   subtitle?: string;
   color?: string | null;
+  imageUrl?: string | null;  // real poster/cover image URL (from image search)
   className?: string;
   aspect?: 'portrait' | 'landscape' | 'square';
   showTitle?: boolean;
@@ -20,6 +22,7 @@ export function MediaPoster({
   title,
   subtitle,
   color,
+  imageUrl,
   className,
   aspect = 'portrait',
   showTitle = true,
@@ -31,6 +34,8 @@ export function MediaPoster({
     'aspect-square';
 
   const bg = color || 'hsl(220, 30%, 30%)';
+  const [imgError, setImgError] = useState(false);
+  const hasImage = imageUrl && !imgError;
 
   return (
     <div
@@ -39,28 +44,45 @@ export function MediaPoster({
         aspectClass,
         className,
       )}
-      style={{
+      style={hasImage ? undefined : {
         background: `linear-gradient(145deg, ${bg} 0%, hsl(0, 0%, 6%) 100%)`,
       }}
     >
-      {/* Directional lighting — simulates a key light from upper-left */}
-      <div
-        className="absolute inset-0 opacity-50 mix-blend-soft-light"
-        style={{
-          background: `
-            radial-gradient(ellipse 60% 80% at 25% 15%, rgba(255,255,255,0.25) 0%, transparent 55%),
-            radial-gradient(ellipse 50% 60% at 80% 85%, rgba(0,0,0,0.5) 0%, transparent 60%)
-          `,
-        }}
-      />
-      {/* Color wash — a subtle second hue blended in for richness */}
-      <div
-        className="absolute inset-0 opacity-25 mix-blend-color-dodge"
-        style={{
-          background: `radial-gradient(circle at 70% 30%, ${bg} 0%, transparent 70%)`,
-        }}
-      />
-      {/* Vignette */}
+      {/* Real image (if available) */}
+      {hasImage && (
+        <img
+          src={imageUrl!}
+          alt={title}
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={() => setImgError(true)}
+          loading="lazy"
+        />
+      )}
+
+      {/* Gradient overlays — only show when there's no real image */}
+      {!hasImage && (
+        <>
+          {/* Directional lighting — simulates a key light from upper-left */}
+          <div
+            className="absolute inset-0 opacity-50 mix-blend-soft-light"
+            style={{
+              background: `
+                radial-gradient(ellipse 60% 80% at 25% 15%, rgba(255,255,255,0.25) 0%, transparent 55%),
+                radial-gradient(ellipse 50% 60% at 80% 85%, rgba(0,0,0,0.5) 0%, transparent 60%)
+              `,
+            }}
+          />
+          {/* Color wash — a subtle second hue blended in for richness */}
+          <div
+            className="absolute inset-0 opacity-25 mix-blend-color-dodge"
+            style={{
+              background: `radial-gradient(circle at 70% 30%, ${bg} 0%, transparent 70%)`,
+            }}
+          />
+        </>
+      )}
+
+      {/* Vignette — always present for cinematic depth */}
       <div
         className="absolute inset-0"
         style={{

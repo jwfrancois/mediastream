@@ -15,6 +15,7 @@ interface BaseCardProps {
   title: string;
   subtitle?: string;
   color?: string | null;
+  imageUrl?: string | null;
   onClick?: () => void;
   onPlay?: () => void;
   rating?: number | null;
@@ -30,7 +31,7 @@ interface BaseCardProps {
 }
 
 export function MediaCard({
-  title, subtitle, color, onClick, onPlay, rating, year, duration, genre, plot, cast, director, progress, badge, className,
+  title, subtitle, color, imageUrl, onClick, onPlay, rating, year, duration, genre, plot, cast, director, progress, badge, className,
 }: BaseCardProps) {
   return (
     <div
@@ -40,7 +41,7 @@ export function MediaCard({
       )}
       onClick={onClick}
     >
-      <MediaPoster title={title} color={color} showTitle={false} aspect="portrait" />
+      <MediaPoster title={title} color={color} imageUrl={imageUrl} showTitle={false} aspect="portrait" />
 
       {/* Badge (top-left) */}
       {badge && (
@@ -154,7 +155,7 @@ export function MediaCardLandscape({
       onClick={onClick}
       style={{ aspectRatio: aspect }}
     >
-      <MediaPoster title="" color={color} showTitle={false} aspect="landscape" className="!aspect-auto h-full" />
+      <MediaPoster title="" color={color} imageUrl={imageUrl} showTitle={false} aspect="landscape" className="!aspect-auto h-full" />
 
       {/* Badge */}
       {badge && (
@@ -230,7 +231,7 @@ export function MediaCardSquare({
       )}
       onClick={onClick}
     >
-      <MediaPoster title="" color={color} showTitle={false} aspect="square" />
+      <MediaPoster title="" color={color} imageUrl={imageUrl} showTitle={false} aspect="square" />
 
       {badge && (
         <div className="absolute top-2 left-2 z-20 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-primary/90 text-primary-foreground backdrop-blur-sm">

@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Library, Plus, RefreshCw, Trash2, Film, Tv, Music, Mic, BookHeadphones, CheckCircle2, AlertCircle, Loader2, FolderOpen, HardDrive, Cloud, Sparkles } from 'lucide-react';
+import { Library, Plus, RefreshCw, Trash2, Film, Tv, Music, Mic, BookHeadphones, CheckCircle2, AlertCircle, Loader2, FolderOpen, HardDrive, Cloud, Sparkles, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRelativeTime } from '@/lib/format';
 import { useLocalLibraries } from '@/lib/store';
@@ -253,10 +253,11 @@ export function SettingsView() {
 // nothing is uploaded to the server. Supported in Chrome, Edge, Opera, Brave.
 
 function LocalLibrariesCard() {
-  const { libraries, items, scanning, enriching, adding, addLocalLibrary, scanLocalLibrary, enrichLibrary, removeLocalLibrary, loaded } = useLocalLibraries();
+  const { libraries, items, scanning, enriching, fetchingArt, adding, addLocalLibrary, scanLocalLibrary, enrichLibrary, fetchArt, removeLocalLibrary, loaded } = useLocalLibraries();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<'MOVIE' | 'TV' | 'MUSIC' | 'PODCAST' | 'AUDIOBOOK'>('MOVIE');
   const [enrichProgress, setEnrichProgress] = useState<{ done: number; total: number } | null>(null);
+  const [artProgress, setArtProgress] = useState<{ done: number; total: number } | null>(null);
 
   const supported = typeof window !== 'undefined' && isLocalLibrarySupported();
 
@@ -313,6 +314,26 @@ function LocalLibrariesCard() {
     }
   };
 
+  const handleFetchArt = async (id: string, name: string) => {
+    setArtProgress({ done: 0, total: 0 });
+    try {
+      const { fetched, failed } = await fetchArt(id, (done, total) => setArtProgress({ done, total }));
+      if (fetched === 0 && failed > 0) {
+        toast.error(`Artwork fetch failed for "${name}" — the image service may be unavailable. Try again later.`);
+      } else if (fetched === 0) {
+        toast.info(`"${name}": all items already have artwork (up to date)`);
+      } else if (failed > 0) {
+        toast.warning(`Fetched artwork for "${name}": ${fetched} item${fetched !== 1 ? 's' : ''} updated, ${failed} failed. Click Fetch Art again to retry.`);
+      } else {
+        toast.success(`Fetched artwork for "${name}": ${fetched} item${fetched !== 1 ? 's' : ''} updated with real poster images, cast photos, and filmographies`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Artwork fetch failed');
+    } finally {
+      setArtProgress(null);
+    }
+  };
+
   const lib = (id: string) => libraries.find((l) => l.id === id);
 
   const handleDelete = async (id: string, name: string) => {
@@ -361,7 +382,9 @@ function LocalLibrariesCard() {
               const itemCount = items.filter((i) => i.libraryId === lib.id).length;
               const isScanning = scanning === lib.id;
               const isEnriching = enriching === lib.id;
+              const isFetchingArt = fetchingArt === lib.id;
               const enrichedCount = items.filter((i) => i.libraryId === lib.id && i.enriched).length;
+              const artCount = items.filter((i) => i.libraryId === lib.id && i.posterUrl).length;
               const needsPermission = lib.permission !== 'granted';
               const showEnrichButton = true; // All library types support enrichment
               return (
@@ -386,19 +409,25 @@ function LocalLibrariesCard() {
                     <div className="text-xs text-muted-foreground mt-1">
                       {itemCount} file{itemCount !== 1 ? 's' : ''} indexed
                       {enrichedCount > 0 && ` • ${enrichedCount} enriched`}
+                      {artCount > 0 && ` • ${artCount} with artwork`}
                       {lib.lastScanAt > 0 && ` • Last scanned ${formatRelativeTime(new Date(lib.lastScanAt))}`}
                     </div>
-                    {isEnriching && enrichProgress && enrichProgress.total > 0 && (
+                    {(isEnriching && enrichProgress && enrichProgress.total > 0) && (
                       <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">Enriching</span>
                         <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary transition-all"
-                            style={{ width: `${Math.round((enrichProgress.done / enrichProgress.total) * 100)}%` }}
-                          />
+                          <div className="h-full bg-primary transition-all" style={{ width: `${Math.round((enrichProgress.done / enrichProgress.total) * 100)}%` }} />
                         </div>
-                        <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">
-                          {enrichProgress.done}/{enrichProgress.total}
-                        </span>
+                        <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">{enrichProgress.done}/{enrichProgress.total}</span>
+                      </div>
+                    )}
+                    {(isFetchingArt && artProgress && artProgress.total > 0) && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">Fetching art</span>
+                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full bg-primary transition-all" style={{ width: `${Math.round((artProgress.done / artProgress.total) * 100)}%` }} />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">{artProgress.done}/{artProgress.total}</span>
                       </div>
                     )}
                   </div>
@@ -407,7 +436,7 @@ function LocalLibrariesCard() {
                       size="sm"
                       variant="outline"
                       onClick={() => handleScan(lib.id, lib.name)}
-                      disabled={isScanning || isEnriching || !supported}
+                      disabled={isScanning || isEnriching || isFetchingArt || !supported}
                     >
                       {isScanning ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
                       {isScanning ? 'Scanning…' : 'Scan'}
@@ -417,7 +446,7 @@ function LocalLibrariesCard() {
                         size="sm"
                         variant="secondary"
                         onClick={() => handleEnrich(lib.id, lib.name)}
-                        disabled={isScanning || isEnriching || itemCount === 0}
+                        disabled={isScanning || isEnriching || isFetchingArt || itemCount === 0}
                         title="Extract metadata (plot, cast, rating) and group sequels into collections using AI"
                       >
                         {isEnriching ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
@@ -425,12 +454,22 @@ function LocalLibrariesCard() {
                       </Button>
                     )}
                     <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => handleFetchArt(lib.id, lib.name)}
+                      disabled={isScanning || isEnriching || isFetchingArt || itemCount === 0}
+                      title="Fetch real poster art, cast photos, and filmography from the web"
+                    >
+                      {isFetchingArt ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ImageIcon className="w-4 h-4 mr-1" />}
+                      {isFetchingArt ? 'Fetching…' : 'Art'}
+                    </Button>
+                    <Button
                       size="icon"
                       variant="ghost"
                       onClick={() => handleDelete(lib.id, lib.name)}
                       className="text-muted-foreground hover:text-destructive"
                       aria-label="Delete local library"
-                      disabled={isScanning || isEnriching}
+                      disabled={isScanning || isEnriching || isFetchingArt}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
