@@ -14,10 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { writeFile, readFile, mkdtemp } from 'fs/promises';
-import { tmpdir } from 'os';
-import path from 'path';
-import ZAI from 'z-ai-web-dev-sdk';
+import { callLLMWithRetry } from '@/lib/llm-queue';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -187,20 +184,20 @@ async function fetchImage(query: string, count: number = 3): Promise<string | nu
 // Use the LLM to generate a filmography or discography
 async function fetchFilmography(name: string, role: string): Promise<Array<{ title: string; year?: number; role?: string }>> {
   try {
-    const zai = await ZAI.create();
     const prompt = role === 'Artist'
       ? `List 5 notable albums by ${name}. Return ONLY a JSON array: [{"title":"album name","year":2020,"role":"Album"}]. No markdown, no commentary.`
       : role === 'Author'
       ? `List 5 notable books by ${name}. Return ONLY a JSON array: [{"title":"book title","year":2020,"role":"Book"}]. No markdown, no commentary.`
       : `List 5 notable films by ${name} (${role}). Return ONLY a JSON array: [{"title":"film title","year":2020,"role":"${role}"}]. No markdown, no commentary.`;
 
-    const completion = await zai.chat.completions.create({
-      messages: [
+    const completion = await callLLMWithRetry(
+      [
         { role: 'assistant', content: 'You are a media database expert. Return only valid JSON.' },
         { role: 'user', content: prompt },
       ],
-      thinking: { type: 'disabled' },
-    });
+      undefined,
+      1, // max 1 server-side retry
+    );
 
     const raw = completion.choices[0]?.message?.content ?? '';
     // Extract JSON array from the response

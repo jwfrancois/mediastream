@@ -10,7 +10,7 @@
 //   - AUDIOBOOK: synopsis, author bio, genre, year, rating
 
 import { NextRequest, NextResponse } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
+import { callLLMWithRetry } from '@/lib/llm-queue';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -49,33 +49,34 @@ export async function POST(req: NextRequest) {
   const batch = items.slice(0, 15);
 
   try {
-    const zai = await ZAI.create();
     const systemPrompt = buildSystemPrompt(type);
     const userPrompt = buildUserPrompt(type, batch);
 
-    // Single attempt — if rate-limited, return 429 immediately so the
-    // CLIENT can handle the retry (client-side has no ALB timeout).
-    // Server-side retry waits cause 502 Bad Gateway because the ALB
-    // closes the connection after ~60 seconds.
+    // Use the serialized LLM queue — this ensures only one LLM call is
+    // in-flight at a time with a minimum 12s delay between calls.
+    // The queue handles 429 retries server-side (with waits), but if the
+    // total wait would exceed the 60s ALB timeout, it returns 429 to the
+    // client for client-side retry.
     let completion;
     try {
-      completion = await zai.chat.completions.create({
-        messages: [
+      completion = await callLLMWithRetry(
+        [
           { role: 'assistant', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        thinking: { type: 'disabled' },
-      });
+        undefined,
+        2, // max 2 server-side retries (keeps total under 60s)
+      );
     } catch (e: any) {
       const msg = e?.message || String(e);
       if (msg.includes('429') || msg.includes('Too many requests')) {
-        // Return 429 to the client immediately — it will wait and retry
+        // Return 429 to the client for client-side retry (no ALB timeout)
         return NextResponse.json(
           { error: 'Rate limited', retry: true },
           { status: 429 },
         );
       }
-      throw e; // non-rate-limit error — rethrow
+      throw e;
     }
 
     const rawResponse = completion.choices[0]?.message?.content ?? '';
