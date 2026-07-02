@@ -546,7 +546,24 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
           const refreshedItems = await ll.loadLocalItems();
           set({ items: refreshedItems });
           return { ok: true, enriched: data.items.length };
-        } catch (e) {
+        } catch (e: any) {
+          const msg = (e as Error).message || '';
+          // If rate-limited (429), wait and retry instead of splitting
+          if (msg.includes('429') || msg.includes('Too many requests')) {
+            if (batchItems.length > 2) {
+              // Split and retry with delay — smaller batches are less likely to rate-limit
+              await new Promise(r => setTimeout(r, 10000));
+              const mid = Math.floor(batchItems.length / 2);
+              const half1 = batchItems.slice(0, mid);
+              const half2 = batchItems.slice(mid);
+              const r1 = await processBatch(half1);
+              const r2 = await processBatch(half2);
+              return { ok: r1.ok && r2.ok, enriched: r1.enriched + r2.enriched };
+            }
+            // Small batch still rate-limited — wait longer and give up
+            console.error(`Enrichment rate-limited (${batchItems.length} items):`, e);
+            return { ok: false, enriched: 0 };
+          }
           // If the batch has more than 2 items, split it in half and retry
           // each half — this handles 502/timeout errors on larger batches.
           if (batchItems.length > 2) {
@@ -569,6 +586,10 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         if (!result.ok) failedBatches++;
         done += batch.length;
         onProgress?.(done, total);
+        // Delay between batches to avoid rate-limiting the LLM API
+        if (i + BATCH_SIZE < itemsToEnrich.length) {
+          await new Promise(r => setTimeout(r, 3000));
+        }
       }
 
       return { enriched: enrichedCount, failedBatches };

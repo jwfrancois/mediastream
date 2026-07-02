@@ -14,7 +14,7 @@ import ZAI from 'z-ai-web-dev-sdk';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 300; // 5 min — allows for rate-limit retry waits
 
 interface EnrichRequestItem {
   id: string;
@@ -53,13 +53,34 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSystemPrompt(type);
     const userPrompt = buildUserPrompt(type, batch);
 
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'assistant', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      thinking: { type: 'disabled' },
-    });
+    // Retry loop for 429 rate-limit errors — wait and retry up to 3 times
+    let completion: any = null;
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        completion = await zai.chat.completions.create({
+          messages: [
+            { role: 'assistant', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          thinking: { type: 'disabled' },
+        });
+        break; // success
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        if (msg.includes('429') || msg.includes('Too many requests')) {
+          const waitMs = 15000 * (attempt + 1); // 15s, 30s, 45s, 60s
+          console.warn(`Enrich rate limited, waiting ${waitMs / 1000}s before retry ${attempt + 1}/4...`);
+          await new Promise(r => setTimeout(r, waitMs));
+          lastError = e;
+          continue;
+        }
+        throw e; // non-rate-limit error — rethrow immediately
+      }
+    }
+    if (!completion) {
+      throw lastError || new Error('LLM call failed after all retries');
+    }
 
     const rawResponse = completion.choices[0]?.message?.content ?? '';
     const parsed = parseJsonResponse(rawResponse);
