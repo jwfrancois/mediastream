@@ -398,10 +398,9 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
       const apiType = lib.type; // MOVIE | TV | AUDIOBOOK | MUSIC | PODCAST
 
       // Process in small batches to keep each LLM call under the gateway
-      // timeout. Larger batches (30+) cause 502 Bad Gateway errors because
-      // the load balancer closes the connection before the LLM finishes
-      // generating the full JSON response.
-      const BATCH_SIZE = 8;
+      // timeout AND to avoid rate-limiting (429). The LLM API allows roughly
+      // 5-8 requests per minute, so small batches + delays are essential.
+      const BATCH_SIZE = 4;
       let enrichedCount = 0;
       let done = 0;
       let failedBatches = 0;
@@ -427,16 +426,16 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         try {
           // Fetch with client-side retry on 429 (client has no ALB timeout)
           let res: Response | null = null;
-          for (let attempt = 0; attempt < 5; attempt++) {
+          for (let attempt = 0; attempt < 6; attempt++) {
             res = await fetch('/api/enrich', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ type: apiType, items: requestItems }),
             });
             if (res.ok) break;
-            if (res.status === 429 && attempt < 4) {
-              const waitMs = 15000 * (attempt + 1); // 15s, 30s, 45s, 60s
-              console.warn(`Enrich rate-limited, waiting ${waitMs / 1000}s (attempt ${attempt + 1}/5)...`);
+            if (res.status === 429 && attempt < 5) {
+              const waitMs = 30000 * (attempt + 1); // 30s, 60s, 90s, 120s, 150s
+              console.warn(`Enrich rate-limited, waiting ${waitMs / 1000}s (attempt ${attempt + 1}/6)...`);
               await new Promise(r => setTimeout(r, waitMs));
               continue;
             }
@@ -600,7 +599,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         onProgress?.(done, total);
         // Delay between batches to avoid rate-limiting the LLM API
         if (i + BATCH_SIZE < itemsToEnrich.length) {
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, 10000));
         }
       }
 
