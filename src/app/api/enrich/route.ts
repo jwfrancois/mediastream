@@ -14,7 +14,7 @@ import ZAI from 'z-ai-web-dev-sdk';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 300; // 5 min — allows for rate-limit retry waits
+export const maxDuration = 60; // keep under ALB timeout
 
 interface EnrichRequestItem {
   id: string;
@@ -53,33 +53,29 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSystemPrompt(type);
     const userPrompt = buildUserPrompt(type, batch);
 
-    // Retry loop for 429 rate-limit errors — wait and retry up to 3 times
-    let completion: any = null;
-    let lastError: Error | null = null;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        completion = await zai.chat.completions.create({
-          messages: [
-            { role: 'assistant', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          thinking: { type: 'disabled' },
-        });
-        break; // success
-      } catch (e: any) {
-        const msg = e?.message || String(e);
-        if (msg.includes('429') || msg.includes('Too many requests')) {
-          const waitMs = 15000 * (attempt + 1); // 15s, 30s, 45s, 60s
-          console.warn(`Enrich rate limited, waiting ${waitMs / 1000}s before retry ${attempt + 1}/4...`);
-          await new Promise(r => setTimeout(r, waitMs));
-          lastError = e;
-          continue;
-        }
-        throw e; // non-rate-limit error — rethrow immediately
+    // Single attempt — if rate-limited, return 429 immediately so the
+    // CLIENT can handle the retry (client-side has no ALB timeout).
+    // Server-side retry waits cause 502 Bad Gateway because the ALB
+    // closes the connection after ~60 seconds.
+    let completion;
+    try {
+      completion = await zai.chat.completions.create({
+        messages: [
+          { role: 'assistant', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        thinking: { type: 'disabled' },
+      });
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      if (msg.includes('429') || msg.includes('Too many requests')) {
+        // Return 429 to the client immediately — it will wait and retry
+        return NextResponse.json(
+          { error: 'Rate limited', retry: true },
+          { status: 429 },
+        );
       }
-    }
-    if (!completion) {
-      throw lastError || new Error('LLM call failed after all retries');
+      throw e; // non-rate-limit error — rethrow
     }
 
     const rawResponse = completion.choices[0]?.message?.content ?? '';

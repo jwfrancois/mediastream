@@ -425,14 +425,26 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         }));
 
         try {
-          const res = await fetch('/api/enrich', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: apiType, items: requestItems }),
-          });
-          if (!res.ok) {
-            const errBody = await res.text().catch(() => res.statusText);
-            throw new Error(`Enrich API ${res.status}: ${errBody}`);
+          // Fetch with client-side retry on 429 (client has no ALB timeout)
+          let res: Response | null = null;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            res = await fetch('/api/enrich', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: apiType, items: requestItems }),
+            });
+            if (res.ok) break;
+            if (res.status === 429 && attempt < 4) {
+              const waitMs = 15000 * (attempt + 1); // 15s, 30s, 45s, 60s
+              console.warn(`Enrich rate-limited, waiting ${waitMs / 1000}s (attempt ${attempt + 1}/5)...`);
+              await new Promise(r => setTimeout(r, waitMs));
+              continue;
+            }
+            break; // non-429 error or retries exhausted
+          }
+          if (!res || !res.ok) {
+            const errBody = res ? await res.text().catch(() => res.statusText) : 'no response';
+            throw new Error(`Enrich API ${res?.status ?? 'unknown'}: ${errBody}`);
           }
           const data = await res.json() as { items: Array<any> };
 
