@@ -40,7 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-local-*
+# Internal scripts (not the local-library.ts source file!)
+local-config
+local-data
+local-test
 .claude
 .z-ai-config
 *.log
