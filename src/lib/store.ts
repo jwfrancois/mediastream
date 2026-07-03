@@ -55,6 +55,34 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// ----------- Auto-Enrich Preference -----------
+// When enabled, scanning a library automatically chains into metadata
+// enrichment and artwork fetching — just like Plex/Jellyfin do.
+
+interface AutoEnrichState {
+  autoEnrich: boolean;
+  setAutoEnrich: (v: boolean) => void;
+}
+
+const AUTO_ENRICH_KEY = 'mediastream-auto-enrich';
+
+function loadAutoEnrich(): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    return localStorage.getItem(AUTO_ENRICH_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export const useAutoEnrich = create<AutoEnrichState>((set) => ({
+  autoEnrich: loadAutoEnrich(),
+  setAutoEnrich: (v) => {
+    set({ autoEnrich: v });
+    try { localStorage.setItem(AUTO_ENRICH_KEY, String(v)); } catch { /* ignore */ }
+  },
+}));
+
 // ----------- Navigation -----------
 export type ViewType =
   | { kind: 'dashboard' }
@@ -271,11 +299,13 @@ export function toastError(message: string) {
 interface LocalLibraryState {
   libraries: LocalLibrary[];
   items: LocalMediaItem[];
-  loaded: boolean; // true after initial hydration from IndexedDB
-  scanning: string | null; // library id currently being scanned, or null
-  enriching: string | null; // library id currently being enriched, or null
-  fetchingArt: string | null; // library id currently fetching artwork, or null
+  loaded: boolean;
+  scanning: string | null;
+  enriching: string | null;
+  fetchingArt: string | null;
   adding: boolean;
+  // Pipeline stage for auto-enrich: shows what's happening after a scan
+  pipelineStage: { libraryId: string; stage: 'scanning' | 'enriching' | 'fetching-art' | 'done'; progress?: { done: number; total: number } } | null;
 
   hydrate: () => Promise<void>;
   addLocalLibrary: (name: string, type: LocalLibraryType) => Promise<void>;
@@ -295,6 +325,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
   enriching: null,
   fetchingArt: null,
   adding: false,
+  pipelineStage: null,
 
   hydrate: async () => {
     if (get().loaded) return;
@@ -323,7 +354,7 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
   },
 
   scanLocalLibrary: async (id) => {
-    set({ scanning: id });
+    set({ scanning: id, pipelineStage: { libraryId: id, stage: 'scanning' } });
     try {
       const ll = await import('./local-library');
       const lib = get().libraries.find((l) => l.id === id);
@@ -337,6 +368,45 @@ export const useLocalLibraries = create<LocalLibraryState>((set, get) => ({
         items,
         libraries: s.libraries.map((l) => (l.id === id ? updatedLib : l)),
       }));
+
+      // === Auto-enrich pipeline ===
+      // After scanning, automatically chain into enrichment + artwork fetching
+      // (just like Plex/Jellyfin do). This can be disabled in Settings.
+      const autoEnrich = useAutoEnrich.getState().autoEnrich;
+      if (autoEnrich && result.added > 0) {
+        // Stage 2: Enrichment
+        set({ scanning: null, pipelineStage: { libraryId: id, stage: 'enriching', progress: { done: 0, total: 0 } } });
+        try {
+          const enrichResult = await get().enrichLibrary(id, (done, total) => {
+            set({ pipelineStage: { libraryId: id, stage: 'enriching', progress: { done, total } } });
+          });
+          console.log(`Auto-enrich: ${enrichResult.enriched} items enriched`);
+
+          // Stage 3: Artwork fetching (only if enrichment succeeded for some items)
+          if (enrichResult.enriched > 0) {
+            set({ pipelineStage: { libraryId: id, stage: 'fetching-art', progress: { done: 0, total: 0 } } });
+            try {
+              const artResult = await get().fetchArt(id, (done, total) => {
+                set({ pipelineStage: { libraryId: id, stage: 'fetching-art', progress: { done, total } } });
+              });
+              console.log(`Auto-art: ${artResult.fetched} items got artwork`);
+            } catch (e) {
+              console.warn('Auto-art failed (non-fatal):', e);
+            }
+          }
+        } catch (e) {
+          console.warn('Auto-enrich failed (non-fatal):', e);
+        }
+      }
+
+      set({ pipelineStage: { libraryId: id, stage: 'done' } });
+      // Clear pipeline stage after 3 seconds
+      setTimeout(() => {
+        if (get().pipelineStage?.libraryId === id && get().pipelineStage?.stage === 'done') {
+          set({ pipelineStage: null });
+        }
+      }, 3000);
+
       return { added: result.added, skipped: result.skipped };
     } finally {
       set({ scanning: null });

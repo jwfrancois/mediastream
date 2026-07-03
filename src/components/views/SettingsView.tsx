@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Library, Plus, RefreshCw, Trash2, Film, Tv, Music, Mic, BookHeadphones, CheckCircle2, AlertCircle, Loader2, FolderOpen, HardDrive, Cloud, Sparkles, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRelativeTime } from '@/lib/format';
-import { useLocalLibraries, useMusicTheme } from '@/lib/store';
+import { useLocalLibraries, useMusicTheme, useAutoEnrich } from '@/lib/store';
 import { isLocalLibrarySupported } from '@/lib/local-library';
 import { MusicThemeToggle } from '@/components/layout/MusicThemeToggle';
 
@@ -37,6 +37,7 @@ const LIBRARY_TYPE_META: Record<string, { label: string; icon: React.ComponentTy
 export function SettingsView() {
   const { data: libraries, loading, refetch } = useApi<LibraryData[]>('/api/libraries');
   const { theme } = useMusicTheme();
+  const { autoEnrich, setAutoEnrich } = useAutoEnrich();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState('MOVIE');
   const [newPath, setNewPath] = useState('');
@@ -122,6 +123,43 @@ export function SettingsView() {
               </p>
             </div>
             <MusicThemeToggle />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Auto-enrichment toggle */}
+      <Card className="mb-8 border-primary/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-primary" />
+            Auto-Enrichment
+          </CardTitle>
+          <CardDescription>
+            When enabled, scanning a library automatically fetches metadata (plot, cast, ratings) and real poster artwork — just like Plex and Jellyfin. You no longer need to click Enrich and Art manually.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">
+                {autoEnrich ? 'Enabled' : 'Disabled'}
+              </div>
+              <p className="text-xs text-muted-foreground max-w-md">
+                {autoEnrich
+                  ? 'Scan → Enrich → Fetch Art runs automatically in sequence. The pipeline shows progress for each stage.'
+                  : 'You will need to click Enrich and Art buttons manually after scanning.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAutoEnrich(!autoEnrich)}
+              className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${autoEnrich ? 'bg-primary' : 'bg-muted'}`}
+              role="switch"
+              aria-checked={autoEnrich}
+              aria-label="Toggle auto-enrichment"
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${autoEnrich ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
           </div>
         </CardContent>
       </Card>
@@ -283,7 +321,8 @@ export function SettingsView() {
 // nothing is uploaded to the server. Supported in Chrome, Edge, Opera, Brave.
 
 function LocalLibrariesCard() {
-  const { libraries, items, scanning, enriching, fetchingArt, adding, addLocalLibrary, scanLocalLibrary, enrichLibrary, fetchArt, removeLocalLibrary, loaded } = useLocalLibraries();
+  const { libraries, items, scanning, enriching, fetchingArt, adding, pipelineStage, addLocalLibrary, scanLocalLibrary, enrichLibrary, fetchArt, removeLocalLibrary, loaded } = useLocalLibraries();
+  const { autoEnrich } = useAutoEnrich();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<'MOVIE' | 'TV' | 'MUSIC' | 'PODCAST' | 'AUDIOBOOK'>('MOVIE');
   const [enrichProgress, setEnrichProgress] = useState<{ done: number; total: number } | null>(null);
@@ -311,11 +350,23 @@ function LocalLibrariesCard() {
 
   const handleScan = async (id: string, name: string) => {
     try {
+      // If auto-enrich is on, the scan will chain into enrichment + art fetching
+      // automatically. Show a combined message at the end.
       const { added, skipped } = await scanLocalLibrary(id);
-      if (skipped > 0) {
+
+      if (autoEnrich && added > 0) {
+        // The pipeline already ran enrichment + art. Show a combined summary.
+        const enrichedCount = items.filter((i) => i.libraryId === id && i.enriched).length;
+        const artCount = items.filter((i) => i.libraryId === id && i.posterUrl).length;
+        toast.success(
+          `"${name}" ready: ${added} files indexed • ${enrichedCount} enriched • ${artCount} with artwork`,
+        );
+      } else if (skipped > 0) {
         toast.success(
           `Scanned "${name}": ${added} file${added !== 1 ? 's' : ''} indexed (${skipped} skipped due to access errors — see console for details)`,
         );
+      } else if (added === 0) {
+        toast.info(`"${name}": no new files found (already up to date)`);
       } else {
         toast.success(`Scanned "${name}": ${added} file${added !== 1 ? 's' : ''} indexed`);
       }
@@ -442,7 +493,31 @@ function LocalLibrariesCard() {
                       {artCount > 0 && ` • ${artCount} with artwork`}
                       {lib.lastScanAt > 0 && ` • Last scanned ${formatRelativeTime(new Date(lib.lastScanAt))}`}
                     </div>
-                    {(isEnriching && enrichProgress && enrichProgress.total > 0) && (
+                    {/* Pipeline stage progress (auto-enrich: Scanning → Enriching → Fetching Art) */}
+                    {pipelineStage?.libraryId === lib.id && pipelineStage.stage !== 'done' && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] text-primary font-medium whitespace-nowrap flex items-center gap-1">
+                          {pipelineStage.stage === 'scanning' && <><Loader2 className="w-3 h-3 animate-spin" /> Scanning</>}
+                          {pipelineStage.stage === 'enriching' && <><Loader2 className="w-3 h-3 animate-spin" /> Enriching metadata</>}
+                          {pipelineStage.stage === 'fetching-art' && <><Loader2 className="w-3 h-3 animate-spin" /> Fetching artwork</>}
+                        </span>
+                        {pipelineStage.progress && pipelineStage.progress.total > 0 && (
+                          <>
+                            <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full bg-primary transition-all" style={{ width: `${Math.round((pipelineStage.progress.done / pipelineStage.progress.total) * 100)}%` }} />
+                            </div>
+                            <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">{pipelineStage.progress.done}/{pipelineStage.progress.total}</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {pipelineStage?.libraryId === lib.id && pipelineStage.stage === 'done' && (
+                      <div className="mt-2 text-[10px] text-green-500 font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Pipeline complete
+                      </div>
+                    )}
+                    {/* Manual progress bars (when Enrich/Art buttons are clicked directly) */}
+                    {(isEnriching && enrichProgress && enrichProgress.total > 0 && !pipelineStage) && (
                       <div className="mt-2 flex items-center gap-2">
                         <span className="text-[10px] text-muted-foreground whitespace-nowrap">Enriching</span>
                         <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
@@ -451,7 +526,7 @@ function LocalLibrariesCard() {
                         <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">{enrichProgress.done}/{enrichProgress.total}</span>
                       </div>
                     )}
-                    {(isFetchingArt && artProgress && artProgress.total > 0) && (
+                    {(isFetchingArt && artProgress && artProgress.total > 0 && !pipelineStage) && (
                       <div className="mt-2 flex items-center gap-2">
                         <span className="text-[10px] text-muted-foreground whitespace-nowrap">Fetching art</span>
                         <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
